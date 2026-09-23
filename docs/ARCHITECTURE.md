@@ -1,4 +1,4 @@
-# Magical Conquest prototype architecture (MC-001)
+# Magical Conquest prototype architecture (MC-001 + MC-002)
 
 The prototype has two goals: to show that the core rules work, and to keep
 those rules portable to a future 3D engine and server. The main design
@@ -7,22 +7,27 @@ decision is to keep game rules separate from presentation.
 ## Layers
 
 ```
-presentation (Pygame)  ->  session  ->  entities / progression  ->  core
+presentation (Pygame)  ->  session  ->  entities  ->  magic, equipment, progression  ->  core
                                     \->  world
-persistence  ->  entities, world, core
+persistence  ->  entities, magic/equipment catalogs, world, core
 ```
 
 Dependencies point one way only, and there are no circular imports.
 
 | Package | Knows about | Must not know about |
 |---|---|---|
-| `game.core` | the standard library | Pygame, files, players, levels |
+| `game.core` | the standard library | Pygame, files, players, levels, weapons, spells |
+| `game.magic` | `core` | Pygame, files, equipment |
+| `game.equipment` | `core` | Pygame, files, magic |
 | `game.progression` | `core.stats` | Pygame, files |
-| `game.entities` | `core`, `progression` | Pygame, files |
+| `game.entities` | `core`, `magic`, `equipment`, `progression` | Pygame, files |
 | `game.world` | the standard library | rendering, entities, input |
 | `game.persistence` | entities, world, JSON | Pygame |
 | `game.session` | everything except presentation | Pygame |
 | `game.presentation` | session, and Pygame | game rules |
+
+`game.core` refers to `MagicAttribute` only in type hints (under
+`TYPE_CHECKING`), so at runtime it still depends only on the standard library.
 
 `game.presentation.pygame_app` is the only module that imports `pygame`. The
 tests import everything else, and they check that the full demo loop runs
@@ -40,6 +45,10 @@ headlessly through `GameSession`.
   outside `presentation`, so the tests and a future server can run the same
   loop without a window. Pygame only converts key presses into a
   `PlayerInput` and draws rectangles.
+- MC-002 adds the `game/magic/` and `game/equipment/` packages. Combat stays
+  in `game/core/combat.py`, which MC-002 extends rather than replaces. The
+  defensive mechanics live in `game/core/defense.py`, because they apply to
+  every entity whatever it is carrying.
 
 ## Entities and stats
 
@@ -59,33 +68,137 @@ players or levels.
 more), a position and a size. `Player` and `Enemy` subclass `Entity`.
 `Entity.receive_damage` is the only path that can kill an entity. When health
 first reaches 0, it creates a frozen `DeathRecord` with the entity, the killer,
-the cause and the world time. After that, the entity ignores all damage.
+the cause, the world time and (since MC-002) a `DeathContext`. After that,
+the entity ignores all damage. Since MC-002, an entity also carries a set of
+magic attributes and a `DefensiveState`, and exposes `guard_profile()`, which
+reports what its loadout lets it block or parry. The base entity can do
+neither; `Player` derives both from its equipped weapon.
 
 ## Combat flow
 
 The combat code is in `game/core/combat.py`. It is pure and deterministic: no
 randomness and no clock.
 
+0. For spells only, `cast_spell` first checks the spell's requirements (see
+   "Magic" below).
 1. `try_attack` checks the attacker's `Cooldown`.
 2. `resolve_attack` rejects the attack if the attacker is dead, the target is
    dead, the target is out of reach, or the attacker lacks stamina or mana.
-   Resources are spent only when the attack lands.
-3. `raw = base_power + attribute * scaling`. The attribute is
+   These rejections cost nothing.
+3. The attacker pays the stamina and mana costs. The attack is now executed,
+   even if it is then blocked, parried or dodged.
+4. `raw = base_power + attribute * scaling`. The attribute is
    `physical_strength` for a physical attack and `magic_power` for a magic one.
-4. `mitigated = raw * K / (K + defense)`, with `K = 100`. The defense is
+5. `mitigated = raw * K / (K + defense)`, with `K = 100`. The defense is
    `durability` against physical attacks and `magic_resistance` against magic.
-5. `final = max(mitigated, 10% of raw, 1)`.
-6. `defender.receive_damage(final)` is called, and the result reports the
-   damage and any death.
-7. On a hit, the cooldown restarts, shortened by agility:
+6. `final = max(mitigated, 10% of raw, 1)`.
+7. `apply_defense` checks the defender's active defense, in the order dodge,
+   then parry, then block (see "Block, parry and dodge").
+8. Any damage left over goes to `defender.receive_damage`, together with the
+   death context.
+9. Once an attack is executed, the cooldown restarts, shortened by agility:
    `cooldown / (1 + agility/100)`.
+
+Every result is an `AttackResult` with an `AttackOutcome` enum: `HIT`,
+`BLOCKED`, `PARRIED`, `DODGED`, `OUT_OF_RANGE`, `NOT_ENOUGH_STAMINA`,
+`NOT_ENOUGH_MANA`, `ON_COOLDOWN`, `ATTACKER_DEAD`, `TARGET_DEAD`, or one of
+the spell-requirement outcomes. `landed` means damage got through (`HIT` or
+`BLOCKED`). `executed` means the attack was performed, whatever the defender
+did about it.
+
+Compatibility with MC-001: the `HIT` path is numerically unchanged. The
+MC-001 `FIRE_BOLT` and `MELEE_STRIKE` attacks still exist; `FIRE_BOLT` is now
+the attack behind the catalog's Fire Bolt spell, and `MELEE_STRIKE` is the
+unarmed attack.
 
 **Level never creates invulnerability.** Level is not an input to any damage
 function. A higher-level character is tougher only through the stats it has
 gained: more health, durability and resistance. Mitigation follows a curve
 with diminishing returns, and damage has a floor. So every valid hit deals
 some damage, and a level-1 character can kill a level-1000 one given enough
-hits (see `tests/test_combat.py`). PvP and PvE use exactly the same functions.
+hits (see `tests/test_combat.py` and `tests/test_pvp.py`). PvP and PvE use
+exactly the same functions. Blocking cannot break this rule: a weapon's
+`block_capability` is capped at 0.9, so at least 10% of every blocked hit
+gets through. Parry and dodge only avoid damage inside short windows, on a
+cooldown, and they cost stamina.
+
+## Magic (MC-002)
+
+- `MagicAttribute` (`magic/attributes.py`) has nine members: Fire, Water, Ice,
+  Wind, Air, Earth, Lightning, Thunder and Light. Wind and Air are separate,
+  as are Lightning and Thunder. To add an attribute, add an enum member; the
+  combat code never branches on the element. Light has no special rules yet.
+- `SpellRank` (`magic/ranks.py`) is an ordered enum, E < D < C < B < A < S.
+  `RANK_MIN_MAGIC_POWER` sets a minimum magic power for each rank.
+- `Spell` (`magic/spells.py`) is frozen data: ID, name, rank, element, base
+  power, magic scaling, mana cost, cooldown, reach, minimum magic power and
+  minimum level. `spell.attack` builds the matching combat `Attack`.
+  `required_magic_power` is the larger of the spell's own minimum and its
+  rank's minimum, so a new character can never cast an S-rank spell.
+- `check_spell_requirements` / `cast_spell` (`magic/casting.py`) check, in
+  order: that the caster has the element, the minimum level, and the minimum
+  magic power. Then the spell goes through `try_attack`. A failed requirement
+  costs nothing.
+- `SpellBook` (`magic/spellbook.py`) holds the known spells in the order they
+  were learned, the selected spell, and a separate `Cooldown` for each spell.
+  Learning a spell never bypasses its requirements.
+- `magic/catalog.py` holds nine prototype spells, one per attribute, across
+  ranks E to A. There is no S-rank spell in the catalog; the tests define
+  their own.
+
+## Equipment (MC-002)
+
+- `Weapon` (`equipment/weapons.py`) is frozen data: ID, name, `WeaponType`,
+  base power, strength scaling, reach, stamina cost, cooldown,
+  `block_capability` (0 means it cannot block) and `can_parry`.
+  `weapon.attack` is a physical `Attack`, and `weapon.guard` is a
+  `GuardProfile`.
+- `Equipment` (`equipment/loadout.py`) maps an `EquipSlot` to an item. Only
+  `MAIN_HAND` exists for now. Armor, trinkets and similar items can become new
+  slots without changing callers.
+- `Player.equip` / `unequip` / `weapon_attack` use the loadout. With no weapon,
+  the player fights unarmed with `MELEE_STRIKE`, and can neither block nor
+  parry.
+- `equipment/catalog.py` holds five prototype weapons, one per type. Legendary
+  weapons are out of scope.
+
+## Block, parry and dodge (MC-002)
+
+Each entity has a `DefensiveState` (`core/defense.py`) holding its timers and
+flags. The tuning values live in `DefenseConfig`: they are configurable, and
+they are NON-FINAL. None of these mechanics is random.
+
+| | Needs | Cost | Effect |
+|---|---|---|---|
+| Block (held) | a weapon with `block_capability > 0`, and stamina > 0 | `block_stamina_per_damage` for each point absorbed | absorbs `block_capability` of the damage; if stamina runs out, absorbs only what it can afford, then the guard breaks and blocking stops |
+| Parry (press) | a weapon with `can_parry`; `parry_recovery` has passed | `parry_stamina_cost` when pressed | opens a `parry_window` (0.2 s). A physical attack resolved inside it deals `parry_damage_ratio` (0) of its damage. Outside the window, attacks hit normally |
+| Dodge (press) | `dodge_cooldown` has passed | `dodge_stamina_cost` when pressed | a `dodge_duration` (0.25 s) window in which every attack misses. Dodging drops a block. The session also dashes the player |
+
+By default, weapons parry weapons but not spells (`parry_affects_magic =
+False`), and blocking reduces both kinds of damage. Both settings are prototype
+choices in `DefenseConfig`.
+
+The goblin has a `windup` (0.35 s) before each claw, during which its state is
+`EnemyState.WINDUP`. That wind-up is longer than the parry window, so pressing
+parry the moment the wind-up starts is too early. This timing makes parrying a
+matter of skill, and it would carry over to multiplayer: the server would
+decide whether a strike landed inside the defender's window.
+
+## PvP and death contexts (MC-002)
+
+Combat never checks what kind of entity the target is, so `Player` vs
+`Player` works through the same `resolve_attack` (see `tests/test_pvp.py`).
+
+`DeathRecord.context` is a `DeathContext`: `OPEN_WORLD`, `PVP`, `DUNGEON` or
+`WORLD_EVENT`, plus an optional `context_id`. `resolve_attack` accepts an
+explicit context. Without one, it records `PVP` when both sides have
+`is_player_character`, and `OPEN_WORLD` otherwise. Dungeon and world-event
+systems will pass their context explicitly.
+
+Penalties (XP loss, loot loss, event elimination, respawn) are deliberately
+not implemented. They belong in a later system that reads `DeathRecord`s, for
+example from `GameSession.last_player_death`, and never inside the damage
+formula.
 
 ## Progression
 
@@ -109,7 +222,7 @@ the events that expired.
 `WorldState` does not reference rendering, input or players. That makes it
 the base for later systems (dragon attacks, periodic Arch Demon events, NPC
 routines, market drift, guild events) that must run on a server while players
-are offline. In MC-001, nothing creates events automatically. Only the
+are offline. Nothing creates events automatically yet. Only the
 registry and the clock exist.
 
 ## Persistence
@@ -118,12 +231,24 @@ registry and the clock exist.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "player": {"id": "...", "name": "...", "level": 1, "xp": 0,
-             "position": {"x": 0, "y": 0}, "stats": {"health": 120, "...": "..."}},
+             "position": {"x": 0, "y": 0}, "stats": {"health": 120, "...": "..."},
+             "magic_attributes": ["fire", "ice"], "equipped_weapon": "iron_sword",
+             "known_spells": ["fire_bolt", "ice_shard"], "selected_spell": "fire_bolt"},
   "world": {"time": 0.0, "day_length": 600.0, "events": []}
 }
 ```
+
+- Weapons and spells are stored by catalog ID. An unknown ID, an unknown
+  attribute, or a selected spell the character doesn't know makes the save
+  `MALFORMED`.
+- Migrations: `_MIGRATIONS` maps each old version to a function that
+  upgrades it by one step, and loading applies them in a chain. v1 (MC-001)
+  becomes v2 with the Fire attribute, Fire Bolt known and selected, and no
+  weapon, which is exactly what an MC-001 character could do. Any other
+  version is rejected as `UNSUPPORTED_VERSION`.
+- Cooldowns and defensive timers are not saved; they reset on load.
 
 - Writes are atomic: the file goes to a temp file, then `os.replace`.
 - `load()` never raises for bad input. It returns a `LoadResult` with one of
@@ -142,13 +267,16 @@ The prototype targets a machine with about 2 GB of RAM:
 - The only dependency is Pygame.
 - Only the display and font subsystems are initialized; audio is not.
 - There are no images, sprites or other assets. Everything is drawn as
-  rectangles.
+  rectangles and outlines.
+- Spell and weapon attacks and guard profiles are built once per definition
+  (`cached_property`), not every frame.
 - The frame rate is capped at 60 FPS, and `dt` is clamped after stalls.
 
 ## Future migration considerations
 
 - `core`, `progression`, `world` and `persistence` are plain Python with
-  data-only definitions (`Attack`, `StatGrowth`, `ProgressionCurve`). They can
+  data-only definitions (`Attack`, `Spell`, `Weapon`, `DefenseConfig`,
+  `StatGrowth`, `ProgressionCurve`). They can
   be ported to C#/C++/GDScript almost line by line, or they can stay as the
   authoritative server rules while a 3D client handles presentation.
 - `GameSession` is a model for a server tick: it takes intents in, advances
@@ -160,3 +288,6 @@ The prototype targets a machine with about 2 GB of RAM:
   `SaveManager` behind the same `LoadResult` interface.
 - Entity IDs are UUIDs, so they are already globally unique for a
   multi-server setup.
+- The spell and weapon catalogs are Python tuples today. They could move to
+  data files (JSON) under `data/` without changing the `Spell` or `Weapon`
+  types.

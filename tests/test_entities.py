@@ -48,11 +48,15 @@ class EnemyTests(unittest.TestCase):
     def test_enemy_attacks_in_range_with_cooldown(self):
         player = Player("Aria", position=Vec2(0, 0))
         goblin = create_goblin(position=Vec2(30, 0))
-        first = goblin.update(0.016, player)
+        # MC-002: the goblin telegraphs (winds up) before each claw.
+        self.assertIsNone(goblin.update(0.016, player))
+        self.assertEqual(goblin.state, EnemyState.WINDUP)
+        first = goblin.update(goblin.windup, player)
         self.assertTrue(first.landed)
         self.assertLess(player.stats.health, player.stats.max_health)
         self.assertIsNone(goblin.update(0.016, player))  # still cooling down
-        second = goblin.update(goblin.attack.cooldown, player)
+        self.assertIsNone(goblin.update(goblin.attack.cooldown, player))  # next windup starts
+        second = goblin.update(goblin.windup, player)
         self.assertTrue(second.landed)
 
     def test_enemy_dies_through_combat(self):
