@@ -18,9 +18,14 @@ from typing import Any, Dict, Optional
 from game.core.stats import Stats
 from game.core.vector import Vec2
 from game.entities.player import Player
+from game.equipment.catalog import get_weapon
+from game.magic.attributes import parse_attributes
+from game.magic.catalog import get_spell
 from game.world.world_state import WorldState
 
-SAVE_SCHEMA_VERSION = 1
+# v1: MC-001 (id, name, level, xp, position, stats, world)
+# v2: MC-002 adds magic_attributes, equipped_weapon, known_spells, selected_spell
+SAVE_SCHEMA_VERSION = 2
 
 
 class LoadStatus(str, Enum):
@@ -50,6 +55,10 @@ def player_to_dict(player: Player) -> Dict[str, Any]:
         "xp": player.xp,
         "position": {"x": player.position.x, "y": player.position.y},
         "stats": player.stats.to_dict(),
+        "magic_attributes": sorted(attribute.value for attribute in player.magic_attributes),
+        "equipped_weapon": player.weapon.weapon_id if player.weapon else None,
+        "known_spells": [spell.spell_id for spell in player.spellbook.spells],
+        "selected_spell": player.spellbook.selected_id,
     }
 
 
@@ -57,14 +66,52 @@ def player_from_dict(data: Dict[str, Any]) -> Player:
     if not isinstance(data, dict):
         raise TypeError("player data must be an object")
     position = data.get("position") or {}
-    return Player(
+    player = Player(
         name=data["name"],
         stats=Stats.from_dict(data["stats"]),
         level=data["level"],
         xp=data["xp"],
         entity_id=str(data["id"]),
         position=Vec2(float(position.get("x", 0.0)), float(position.get("y", 0.0))),
+        magic_attributes=parse_attributes(data["magic_attributes"]),
     )
+    weapon_id = data["equipped_weapon"]
+    if weapon_id is not None:
+        player.equip(get_weapon(weapon_id))
+    known = data["known_spells"]
+    if not isinstance(known, list):
+        raise TypeError("known_spells must be a list")
+    for spell_id in known:
+        player.learn_spell(get_spell(spell_id))
+    selected = data["selected_spell"]
+    if selected is not None and not player.spellbook.select(selected):
+        raise ValueError(f"selected_spell {selected!r} is not a known spell")
+    return player
+
+
+def migrate_v1_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
+    """MC-001 saves predate magic and equipment.
+
+    An MC-001 character could always cast Fire Bolt and fought unarmed, so
+    the migrated character keeps exactly that: the Fire attribute, Fire Bolt
+    known and selected, and no weapon.
+    """
+    player = data.get("player")
+    if not isinstance(player, dict):
+        raise TypeError("player data must be an object")
+    migrated = dict(data)
+    migrated["player"] = {
+        **player,
+        "magic_attributes": ["fire"],
+        "equipped_weapon": None,
+        "known_spells": ["fire_bolt"],
+        "selected_spell": "fire_bolt",
+    }
+    migrated["schema_version"] = 2
+    return migrated
+
+
+_MIGRATIONS = {1: migrate_v1_to_v2}
 
 
 def build_save(player: Player, world: WorldState) -> Dict[str, Any]:
@@ -79,12 +126,15 @@ def parse_save(data: Any) -> LoadResult:
     if not isinstance(data, dict):
         return LoadResult(LoadStatus.MALFORMED, error="save root must be an object")
     version = data.get("schema_version")
-    if version != SAVE_SCHEMA_VERSION:
+    known_version = isinstance(version, int) and not isinstance(version, bool)
+    if not known_version or (version != SAVE_SCHEMA_VERSION and version not in _MIGRATIONS):
         return LoadResult(
             LoadStatus.UNSUPPORTED_VERSION,
             error=f"schema_version {version!r} is not supported (expected {SAVE_SCHEMA_VERSION})",
         )
     try:
+        while data["schema_version"] in _MIGRATIONS:
+            data = _MIGRATIONS[data["schema_version"]](data)
         player = player_from_dict(data["player"])
         world = WorldState.from_dict(data["world"])
     except (KeyError, TypeError, ValueError) as exc:
