@@ -1,0 +1,1 @@
+"""Magical Conquest prototype package."""
