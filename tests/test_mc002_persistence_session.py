@@ -142,7 +142,7 @@ class SessionMC002Tests(unittest.TestCase):
         session.update(1 / 60, PlayerInput(parry=True))
         for _ in range(15):
             session.update(1 / 60, PlayerInput())
-        self.assertIn("Parried!", session.messages)
+        self.assertTrue(any(m.startswith("Parried") for m in session.messages))  # MC-003 names the attacker
         self.assertEqual(session.player.stats.health, hp)
 
     def test_parry_too_early_fails(self):
@@ -152,7 +152,7 @@ class SessionMC002Tests(unittest.TestCase):
         session.update(1 / 60, PlayerInput(parry=True))  # windup is longer than the window
         for _ in range(30):
             session.update(1 / 60, PlayerInput())
-        self.assertNotIn("Parried!", session.messages)
+        self.assertFalse(any(m.startswith("Parried") for m in session.messages))
         self.assertLess(session.player.stats.health, hp)
 
     def test_dodge_during_windup(self):
@@ -164,7 +164,7 @@ class SessionMC002Tests(unittest.TestCase):
         session.update(1 / 60, PlayerInput(dodge=True))
         for _ in range(10):
             session.update(1 / 60, PlayerInput())
-        self.assertIn("Dodged!", session.messages)
+        self.assertTrue(any(m.startswith("Dodged") for m in session.messages))
 
     def test_block_while_held(self):
         session = GameSession.new()

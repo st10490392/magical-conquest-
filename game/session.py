@@ -7,14 +7,18 @@ be driven by tests or a future server without a window.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
+from game.ai.space import Bounds
+from game.ai.states import AIState
 from game.core.combat import AttackOutcome, AttackResult
 from game.core.defense import DefenseAction
 from game.core.entity import DeathRecord
 from game.core.vector import Vec2
-from game.entities.enemy import Enemy, create_goblin
+from game.encounters.catalog import get_encounter
+from game.encounters.encounter import CombatEvent, Encounter, EncounterStatus
+from game.entities.enemy import Enemy
 from game.entities.player import Player
 from game.equipment.catalog import WEAPONS
 from game.magic.attributes import MagicAttribute
@@ -25,7 +29,7 @@ from game.world.world_state import WorldState
 # PROTOTYPE VALUES - NON-FINAL BALANCE.
 STAMINA_REGEN_PER_SECOND = 15.0
 MANA_REGEN_PER_SECOND = 4.0
-ENEMY_RESPAWN_SECONDS = 3.0
+ENEMY_RESPAWN_SECONDS = 3.0  # repeating encounters (goblin training) only
 BLOCK_MOVE_MULTIPLIER = 0.5
 DODGE_SPEED_MULTIPLIER = 2.8
 
@@ -33,6 +37,10 @@ DODGE_SPEED_MULTIPLIER = 2.8
 # so the demo also shows the "missing attribute" requirement.
 DEMO_ATTRIBUTES = (MagicAttribute.FIRE, MagicAttribute.ICE, MagicAttribute.WIND, MagicAttribute.LIGHTNING, MagicAttribute.LIGHT)
 STARTING_WEAPON_ID = "iron_sword"
+
+# GameSession.new() keeps the MC-002 goblin loop; the Pygame demo starts
+# with the mixed MC-003 encounter instead.
+DEFAULT_ENCOUNTER_ID = "goblin_training"
 
 # Order in which TAB cycles weapons; None means unarmed.
 WEAPON_CYCLE = (*WEAPONS.keys(), None)
@@ -71,21 +79,29 @@ def outcome_text(outcome: AttackOutcome) -> str:
 
 @dataclass
 class GameSession:
+    """One playable scenario: the player, the world clock and an encounter."""
+
     player: Player
     world: WorldState = field(default_factory=WorldState)
     arena: Arena = field(default_factory=Arena)
-    enemy: Optional[Enemy] = None
+    encounter_id: str = DEFAULT_ENCOUNTER_ID
+    encounter: Optional[Encounter] = None
     kills: int = 0
     messages: List[str] = field(default_factory=list)
     last_player_death: Optional[DeathRecord] = None
     _respawn_timer: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.enemy is None:
-            self.spawn_enemy()
+        if self.encounter is None:
+            self.start_encounter(self.encounter_id)
 
     @classmethod
-    def new(cls, player_name: str = "Hero", arena: Optional[Arena] = None) -> "GameSession":
+    def new(
+        cls,
+        player_name: str = "Hero",
+        arena: Optional[Arena] = None,
+        encounter_id: str = DEFAULT_ENCOUNTER_ID,
+    ) -> "GameSession":
         arena = arena or Arena()
         player = Player(
             player_name,
@@ -95,14 +111,30 @@ class GameSession:
         player.equip(WEAPONS[STARTING_WEAPON_ID])
         for spell in SPELLS.values():
             player.learn_spell(spell)
-        return cls(player=player, arena=arena)
+        return cls(player=player, arena=arena, encounter_id=encounter_id)
 
-    def spawn_enemy(self) -> Enemy:
-        spawn = Vec2(self.arena.width * 0.75, self.arena.height * 0.5)
-        if self.player.position.distance_to(spawn) < 200:
-            spawn = Vec2(self.arena.width * 0.25, self.arena.height * 0.5)
-        self.enemy = create_goblin(level=max(1, self.player.level), position=spawn)
-        return self.enemy
+    # ------------------------------------------------------------- encounter
+    @property
+    def bounds(self) -> Bounds:
+        return (0.0, 0.0, self.arena.width, self.arena.height)
+
+    def start_encounter(self, encounter_id: str, mirror: bool = False) -> Encounter:
+        spec = get_encounter(encounter_id)
+        if mirror:  # respawn on the far side from the player
+            spec = replace(spec, spawns=tuple(replace(s, x=self.arena.width - s.x) for s in spec.spawns))
+        self.encounter_id = encounter_id
+        self.encounter = Encounter(spec, self.player.level, self.bounds)
+        return self.encounter
+
+    @property
+    def enemies(self) -> List[Enemy]:
+        return self.encounter.enemies
+
+    @property
+    def enemy(self) -> Optional[Enemy]:
+        """The nearest living enemy (the player's target), else the first one."""
+        nearest = self.encounter.nearest_enemy(self.player.position)
+        return nearest if nearest is not None else (self.enemies[0] if self.enemies else None)
 
     def log(self, text: str) -> None:
         self.messages.append(text)
@@ -119,25 +151,29 @@ class GameSession:
             self._handle_defense_input(controls)
             self._move_player(dt, controls)
 
-        enemy = self.enemy
+        target = self.encounter.nearest_enemy(player.position)
         busy = player.defense.blocking or player.defense.is_dodging
-        if enemy is not None and enemy.is_alive and player.is_alive and not busy:
+        if target is not None and player.is_alive and not busy:
             if controls.melee:
-                self._player_attack(player.weapon_attack(enemy, self.world.time))
+                self._player_attack(target, player.weapon_attack(target, self.world.time))
             elif controls.magic:
-                self._player_attack(player.cast(enemy, world_time=self.world.time))
+                self._player_attack(target, player.cast(target, world_time=self.world.time))
 
-        if enemy is not None and enemy.is_alive:
-            result = enemy.update(dt, player, self.world.time)
-            enemy.position = self.arena.clamp(enemy.position, enemy.size / 2)
-            if result is not None:
-                self._report_enemy_attack(enemy, result)
-        elif enemy is not None:
-            enemy.update(dt, None)
+        encounter = self.encounter
+        was_over = encounter.is_over
+        for event in encounter.update(dt, player, self.world.time):
+            self._report_enemy_attack(event)
+        if not player.is_alive and self.last_player_death is None:
+            self.last_player_death = player.death
+        if encounter.is_over and not was_over:
+            self._on_encounter_over(encounter)
+        if encounter.status is EncounterStatus.CLEARED and encounter.spec.repeat_on_clear:
             self._respawn_timer -= dt
             if self._respawn_timer <= 0 and player.is_alive:
-                self.spawn_enemy()
-                self.log(f"A level {self.enemy.level} {self.enemy.name} appears.")
+                near = any(player.position.distance_to(Vec2(s.x, s.y)) < 200 for s in encounter.spec.spawns)
+                self.start_encounter(self.encounter_id, mirror=near)
+                for enemy in self.enemies:
+                    self.log(f"A level {enemy.level} {enemy.name} appears.")
 
     def _handle_loadout_input(self, controls: PlayerInput) -> None:
         player = self.player
@@ -187,32 +223,41 @@ class GameSession:
         player.stats.restore_mana(MANA_REGEN_PER_SECOND * dt)
 
     # ------------------------------------------------------------- reporting
-    def _player_attack(self, result: AttackResult) -> AttackResult:
-        enemy = self.enemy
+    def _player_attack(self, target: Enemy, result: AttackResult) -> AttackResult:
         if result.landed:
-            self.log(f"You hit {enemy.name} for {result.damage:.1f}")
+            note = " (staggered!)" if target.state is AIState.STAGGERED else ""
+            self.log(f"You hit {target.name} for {result.damage:.1f}{note}")
             if result.killed:
-                self._on_enemy_killed(enemy)
+                self._on_enemy_killed(target)
         elif result.outcome not in (AttackOutcome.ON_COOLDOWN, AttackOutcome.OUT_OF_RANGE):
             self.log(outcome_text(result.outcome))
         return result
 
-    def _report_enemy_attack(self, enemy: Enemy, result: AttackResult) -> None:
+    def _report_enemy_attack(self, event: CombatEvent) -> None:
+        name, result = event.attacker.name, event.result
+        verb = "shoots" if event.ranged else "hits"
         outcome = result.outcome
         if outcome is AttackOutcome.HIT:
-            self.log(f"{enemy.name} hits you for {result.damage:.1f}")
+            self.log(f"{name} {verb} you for {result.damage:.1f}")
         elif outcome is AttackOutcome.BLOCKED:
             broken = " - guard broken!" if result.guard_broken else ""
-            self.log(f"Blocked {result.absorbed:.1f}, took {result.damage:.1f}{broken}")
+            self.log(f"Blocked {name}: {result.absorbed:.1f} absorbed, took {result.damage:.1f}{broken}")
         elif outcome is AttackOutcome.PARRIED:
-            self.log("Parried!")
+            staggered = " - it staggers!" if event.attacker.state is AIState.STAGGERED else ""
+            self.log(f"Parried {name}!{staggered}")
         elif outcome is AttackOutcome.DODGED:
-            self.log("Dodged!")
+            self.log(f"Dodged {name}!")
         elif outcome is AttackOutcome.OUT_OF_RANGE:
-            self.log(f"{enemy.name} swings and misses")
-        if result.killed:
-            self.last_player_death = result.death
+            self.log(f"{name} swings and misses")
+        if result.killed and event.target is self.player:
             self.log(f"You died ({result.death.context.value}).")
+
+    def _on_encounter_over(self, encounter: Encounter) -> None:
+        if encounter.status is EncounterStatus.CLEARED:
+            self.log(f"{encounter.spec.name}: cleared in {encounter.elapsed:.1f}s")
+            self._respawn_timer = ENEMY_RESPAWN_SECONDS
+        else:
+            self.log(f"{encounter.spec.name}: failed - press R to restart")
 
     def _on_enemy_killed(self, enemy: Enemy) -> None:
         self.kills += 1
@@ -220,4 +265,3 @@ class GameSession:
         self.log(f"{enemy.name} defeated! +{enemy.xp_reward} XP")
         if gained.levels_gained:
             self.log(f"Level up! You are now level {gained.new_level}")
-        self._respawn_timer = ENEMY_RESPAWN_SECONDS
