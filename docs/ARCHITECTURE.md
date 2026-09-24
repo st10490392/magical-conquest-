@@ -1,4 +1,4 @@
-# Magical Conquest prototype architecture (MC-001 + MC-002)
+# Magical Conquest prototype architecture (MC-001 to MC-003)
 
 The prototype has two goals: to show that the core rules work, and to keep
 those rules portable to a future 3D engine and server. The main design
@@ -7,7 +7,7 @@ decision is to keep game rules separate from presentation.
 ## Layers
 
 ```
-presentation (Pygame)  ->  session  ->  entities  ->  magic, equipment, progression  ->  core
+presentation (Pygame)  ->  session  ->  encounters  ->  entities  ->  ai, magic, equipment, progression  ->  core
                                     \->  world
 persistence  ->  entities, magic/equipment catalogs, world, core
 ```
@@ -20,7 +20,9 @@ Dependencies point one way only, and there are no circular imports.
 | `game.magic` | `core` | Pygame, files, equipment |
 | `game.equipment` | `core` | Pygame, files, magic |
 | `game.progression` | `core.stats` | Pygame, files |
-| `game.entities` | `core`, `magic`, `equipment`, `progression` | Pygame, files |
+| `game.ai` | `core` | Pygame, files, concrete enemy types |
+| `game.entities` | `core`, `ai`, `magic`, `equipment`, `progression` | Pygame, files |
+| `game.encounters` | `ai`, `entities`, `core` | Pygame, files, session |
 | `game.world` | the standard library | rendering, entities, input |
 | `game.persistence` | entities, world, JSON | Pygame |
 | `game.session` | everything except presentation | Pygame |
@@ -200,6 +202,108 @@ not implemented. They belong in a later system that reads `DeathRecord`s, for
 example from `GameSession.last_player_death`, and never inside the damage
 formula.
 
+## Enemy AI (MC-003)
+
+The goal is readable, deterministic game AI: no machine learning, no
+behaviour-tree framework, no randomness. Everything is headless. Pygame
+only draws what the AI decided.
+
+### The pieces
+
+| Module | Role |
+|---|---|
+| `ai/states.py` | `AIState`: IDLE, ALERT, APPROACH, POSITION, TELEGRAPH, ATTACK, RECOVER, RETREAT, STAGGERED, DEAD. The old `EnemyState` names (`CHASING`, `WINDUP`, `ATTACKING`) are enum aliases, so they still work. |
+| `ai/perception.py` | `PerceptionConfig(detection_range, disengage_range)` and `perceive()`. An enemy notices a target inside the detection range and gives up only beyond the larger disengage range (hysteresis), so it doesn't flicker between states. Dead or missing targets are invalid. |
+| `ai/attacks.py` | `EnemyAttack` wraps a combat `Attack` with `telegraph`, `recovery`, `projectile_speed` (None for melee) and `trigger_range`. `AttackLifecycle` holds the phase timers. |
+| `ai/behaviors.py` | A `Behavior` returns a `Decision` (state, direction, speed scale, maximum step, and whether it wants to attack). There are hooks for the start of the telegraph, movement during the telegraph, and the moment before the strike. The behaviours are `MeleeBehavior`, `HeavyBehavior` and `RangedBehavior`. |
+| `ai/projectiles.py` | Straight-line projectiles. Hits are checked against a line segment, so fast projectiles can't pass through a target between ticks, and they are resolved through `resolve_attack` at impact. |
+| `ai/coordination.py` | `AttackCoordinator`: melee attack tokens. |
+| `ai/space.py` | `CombatSpace`: the arena bounds, the projectile system, the coordinator, and the death context and ID that an enemy uses while acting. |
+| `entities/enemy.py` | `Enemy.update`: the shared driver (see below). |
+| `entities/archetypes.py` | `EnemyArchetype` data and the `STRIKER`, `ARCHER` and `BRUTE` archetypes. `create_enemy(id, level, position)` builds one; `goblin` is still available. |
+
+### The shared update
+
+`Enemy.update(dt, target, world_time, space)` handles only what every enemy
+has in common, in this order:
+
+1. Tick the cooldown and defense timers.
+2. **DEAD:** drop any attack and release the token.
+3. **STAGGERED:** count down, and do nothing else.
+4. Run perception.
+5. If the enemy is mid-attack, run the lifecycle:
+   - **TELEGRAPH:** optionally move (the behaviour's hook). When the timer
+     runs out, strike: melee attacks go through `resolve_attack` with a range
+     check, and ranged attacks launch a projectile. Start the cooldown and
+     recovery, and release the token.
+   - **RECOVER:** the enemy is committed and does nothing.
+6. Not engaged: **IDLE**. Just engaged: **ALERT** for `alert_time`.
+7. Otherwise, ask the behaviour for a `Decision`: **APPROACH**, **POSITION**,
+   **RETREAT**, or start an attack if the cooldown is ready and, for melee,
+   a token is free.
+
+New enemy types (knights, werewolves, bosses...) add a `Behavior` and an
+archetype. They don't touch this driver.
+
+### Telegraph -> active -> recovery
+
+- **TELEGRAPH:** lasts `telegraph` seconds. No damage is possible; this is the
+  player's window to dodge, parry, block or step away.
+- **ATTACK:** a single tick. A melee attack is resolved immediately and checks
+  range at that moment, so moving out of reach makes it miss
+  (`OUT_OF_RANGE`). A ranged attack launches a projectile aimed where the
+  target stands at release, and the projectile resolves on impact.
+- **RECOVER:** lasts `recovery` seconds. The enemy doesn't move or attack:
+  the punish window.
+- The cooldown starts at release. The token is released at the start of
+  recovery, so another melee enemy can begin its wind-up while this one
+  recovers. That makes the group alternate.
+
+### Archetypes
+
+These are prototype mechanics, not lore species. All values are NON-FINAL.
+
+| | Striker (melee) | Archer (ranged) | Brute (heavy) |
+|---|---|---|---|
+| Question it asks | read and answer close pressure | close the gap or avoid ranged pressure | spot a committed attack and punish its recovery |
+| HP / durability / speed | 70 / 3 / 150 | 45 / 1 / 140 | 260 / 20 / 85 |
+| Telegraph / recovery / cooldown | 0.45 / 0.5 / 1.1 s | 0.7 / 0.35 / 1.8 s | 1.1 / 1.3 / 2.2 s |
+| Behaviour | approaches; tracks at 35% speed during the telegraph | keeps 170–320 units away; retreats and wall-slides when you are closer; aims when it releases | approaches; locks an aim point, stays rooted, lunges 45 units, big hit |
+| Parry stagger | 1.2 s | none (arrows can be parried, but the archer isn't staggered) | 1.8 s |
+
+### Defensive interplay
+
+Enemy hits use the same `resolve_attack` as the player's, so MC-002 dodge,
+parry and block apply unchanged at the moment an attack resolves. If a melee
+attack is **PARRIED** and the enemy has a `parry_stagger`,
+`Enemy.stagger()` cancels its attack, releases its token, and holds it in
+STAGGERED. Every telegraph is longer than the parry window (0.2 s), so
+parrying the moment a wind-up starts is always too early.
+
+## Encounters (MC-003)
+
+- `EncounterSpec` is frozen data: an ID, a name, a list of `SpawnSpec`s
+  (archetype, position, and an optional level that otherwise follows the
+  player's), an optional `trigger_range`, `max_melee_attackers`,
+  `group_alert`, `repeat_on_clear` and a `DeathContext`.
+- `Encounter` builds the enemies, one `ProjectileSystem`, one
+  `AttackCoordinator` and a `CombatSpace`, then tracks the status (PENDING,
+  ACTIVE, CLEARED or FAILED), the elapsed time and the failure reason.
+  `update()` returns `CombatEvent`s for the session to report.
+- It starts immediately, or when the player comes within `trigger_range`.
+  It is **CLEARED** when every enemy is dead, and **FAILED**
+  (`player_died`) when the player dies. `fail(reason)` covers other
+  interruptions. No penalties are applied.
+- With `group_alert`, once one enemy engages, the rest are alerted too, after
+  their own reaction delay. A tiny O(n²) separation step keeps enemies from
+  overlapping (n is 3 at most).
+- The encounter's `DeathContext` and ID are written into death records, so
+  later dungeon, event or arena rules can tell deaths apart.
+- `GameSession` owns one encounter, targets the nearest living enemy, awards
+  XP on kills, and rebuilds `repeat_on_clear` encounters (goblin training).
+  `GameSession.new()` still defaults to goblin training; the Pygame demo
+  starts on `mixed_skirmish`.
+
 ## Progression
 
 `ProgressionCurve` computes the XP needed for the next level as
@@ -249,6 +353,9 @@ registry and the clock exist.
   weapon, which is exactly what an MC-001 character could do. Any other
   version is rejected as `UNSUPPORTED_VERSION`.
 - Cooldowns and defensive timers are not saved; they reset on load.
+- MC-003 doesn't change the save format (it is still v2). Encounters and AI
+  state (telegraphs, recovery, stagger) are transient and never saved.
+  Loading a save restarts the current encounter with the loaded player.
 
 - Writes are atomic: the file goes to a temp file, then `os.replace`.
 - `load()` never raises for bad input. It returns a `LoadResult` with one of
@@ -270,6 +377,9 @@ The prototype targets a machine with about 2 GB of RAM:
   rectangles and outlines.
 - Spell and weapon attacks and guard profiles are built once per definition
   (`cached_property`), not every frame.
+- Enemy AI is a finite-state machine that uses plain distance checks. There is
+  no pathfinding, no physics and no per-frame allocation beyond a few small
+  value objects. Encounters use 1–3 enemies.
 - The frame rate is capped at 60 FPS, and `dt` is clamped after stalls.
 
 ## Future migration considerations
