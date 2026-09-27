@@ -21,6 +21,8 @@ from game.quests.catalog import QUESTS, validate_quests
 from game.quests.log import QuestActionStatus, QuestLog
 from game.quests.model import QuestDefinition, QuestStatus
 from game.quests.service import TurnInResult, TurnInStatus, turn_in
+from game.world.exploration import Exploration, Location
+from game.world.zone_catalog import WORLD
 
 validate_quests(QUESTS, lambda i: i in ITEMS, lambda n: n in NPCS)
 
@@ -37,6 +39,8 @@ class Campaign:
     npcs: NpcRegistry = field(default_factory=NpcRegistry)
     flags: Set[str] = field(default_factory=set)
     ledger: RewardLedger = field(default_factory=RewardLedger)
+    exploration: Exploration = field(default_factory=Exploration)
+    location: Optional[Location] = None  # None: start of the world
 
     def set_flag(self, flag: str) -> None:
         if not _valid_flag(flag):
@@ -49,6 +53,8 @@ class Campaign:
             "npcs": self.npcs.to_dict(),
             "flags": sorted(self.flags),
             "ledger": self.ledger.to_list(),
+            "exploration": self.exploration.to_dict(),
+            "location": self.location.to_dict() if self.location else None,
         }
 
     @classmethod
@@ -63,6 +69,8 @@ class Campaign:
             NpcRegistry.from_dict(data["npcs"], NPCS),
             set(flags),
             RewardLedger.from_list(data["ledger"]),
+            Exploration.from_dict(data["exploration"], WORLD),
+            None if data["location"] is None else Location.from_dict(data["location"], WORLD),
         )
         # Quest completion and the reward ledger must agree, otherwise a save
         # could re-award a quest or lock a quest out forever.
@@ -71,8 +79,11 @@ class Campaign:
             if completed != campaign.ledger.is_claimed(definition.reward_key):
                 raise ValueError(f"{quest_id}: completion and reward ledger disagree")
         for key in campaign.ledger.claimed:
-            if key.startswith("quest:") and key[len("quest:"):] not in quests:
+            kind, _, ident = key.partition(":")
+            if kind == "quest" and ident not in quests:
                 raise ValueError(f"ledger references unknown quest {key}")
+            if kind == "discovery" and ident not in campaign.exploration.discovered:
+                raise ValueError(f"discovery reward {key} claimed but not discovered")
         return campaign
 
 

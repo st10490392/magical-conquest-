@@ -133,6 +133,16 @@ class Entity:
             self.defense.reset()
         return applied
 
+    def revive(self) -> None:
+        """Prototype respawn hook: back to full health, resources and a clean
+        defensive state. It applies NO death penalty; penalty rules are future,
+        context-specific systems that read the ``DeathRecord`` first."""
+        self.death = None
+        self.stats.health = self.stats.max_health
+        self.stats.mana = self.stats.max_mana
+        self.stats.stamina = self.stats.max_stamina
+        self.defense.reset()
+
     def distance_to(self, other: "Entity") -> float:
         return self.position.distance_to(other.position)
 

@@ -40,6 +40,16 @@ class LocationReached(GameEvent):
 
 
 @dataclass(frozen=True)
+class ZoneEntered(GameEvent):
+    zone_id: str
+
+
+@dataclass(frozen=True)
+class ZoneLeft(GameEvent):
+    zone_id: str
+
+
+@dataclass(frozen=True)
 class QuestProgressed(GameEvent):
     quest_id: str
     objective_id: str
