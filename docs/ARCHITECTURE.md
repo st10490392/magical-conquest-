@@ -23,6 +23,10 @@ Dependencies point one way only, and there are no circular imports.
 | `game.ai` | `core` | Pygame, files, concrete enemy types |
 | `game.items` | `core`, `equipment`, `entities.player` (actions only) | Pygame, files |
 | `game.entities` | `core`, `ai`, `magic`, `equipment`, `items.inventory`, `progression` | Pygame, files |
+| `game.events` | standard library | everything else |
+| `game.npcs`, `game.dialogue` | `core.vector` / standard library | quests, items, Pygame |
+| `game.quests` | `events`, `progression.rewards`, `entities.player` (service) | dialogue, Pygame |
+| `game.campaign` | quests, npcs, dialogue model, items | Pygame, session |
 | `game.encounters` | `ai`, `entities`, `core` | Pygame, files, session |
 | `game.world` | the standard library | rendering, entities, input |
 | `game.persistence` | entities, world, JSON | Pygame |
@@ -320,6 +324,21 @@ short:
 - Loot tables use an injected RNG. `Encounter.take_defeated()` is the single
   "enemy died" hook the session uses to grant XP and spawn `GroundLoot`.
 
+## NPCs, dialogue and quests (MC-005)
+
+See [NPCS_DIALOGUE_QUESTS.md](NPCS_DIALOGUE_QUESTS.md). In short:
+
+- A synchronous `EventBus` decouples producers (session and combat) from
+  consumers (the quest log).
+- Dialogue is data and talks to the game only through the
+  `DialogueContext` protocol, which `CampaignContext` implements.
+- The quest log stores only ACTIVE, COMPLETED and FAILED plus event
+  counters. The other statuses are derived.
+- `RewardLedger` plus the atomic `turn_in` guarantee that a reward is
+  granted exactly once.
+- `Campaign` (quests, NPCs, flags, ledger) is the saved story state.
+  `GameSession` wires it to the bus.
+
 ## Progression
 
 `ProgressionCurve` computes the XP needed for the next level as
@@ -369,6 +388,9 @@ registry and the clock exist.
   weapon, which is exactly what an MC-001 character could do. Any other
   version is rejected as `UNSUPPORTED_VERSION`.
 - Cooldowns and defensive timers are not saved; they reset on load.
+- **v4 (MC-005):** adds a `campaign` section (quests, npcs, flags, ledger),
+  checked for consistency between completed quests and the ledger. v3
+  migrates with an empty campaign.
 - **v3 (MC-004):** `stats` are base stats (no equipment bonuses), and the
   save adds `equipment` and `inventory`. v2 migrates.
 - MC-003 didn't change the save format (it stayed v2). Encounters and AI

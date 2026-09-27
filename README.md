@@ -107,6 +107,21 @@ rules before they move to a more capable 3D engine.
   automatically.
 - See [docs/ITEMS_AND_LOOT.md](docs/ITEMS_AND_LOOT.md).
 
+### MC-005: NPCs, dialogue and quests
+
+- **Domain event bus:** quests listen for enemy defeats, NPC talks and
+  locations reached, instead of being wired into combat.
+- **NPCs and dialogue:** prototype NPCs with data-driven dialogue
+  (conditional entry points, hidden responses, effects).
+- **Quests:** defeat, collect, talk and reach objectives; chained quests;
+  fail-on-death; accept, progress, ready, turn-in.
+- **Rewards:** a reward ledger means each reward can be claimed only once,
+  and turn-in is all-or-nothing (a full inventory changes nothing).
+- **Saves:** schema v4 (the campaign); v3 saves migrate.
+- **Demo:** it opens in the **quest camp** scenario. **G** talks, 1–9
+  choose replies, and a quest tracker sits in the top right.
+- See [docs/NPCS_DIALOGUE_QUESTS.md](docs/NPCS_DIALOGUE_QUESTS.md).
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -139,7 +154,8 @@ Options:
 | F / right mouse (hold) | Block (only with a weapon that can block) |
 | Q | Parry (only with a weapon that can parry) |
 | Shift | Dodge (dashes in your movement direction) |
-| G | Pick up nearby loot |
+| G | Talk to a nearby NPC, otherwise pick up nearby loot |
+| 1–9 (in dialogue) | Choose a reply; Esc or G leaves (dialogue pauses the game) |
 | I | Open/close the inventory (pauses the game): Up/Down select, Enter equips/uses/unequips |
 | F5 / F9 | Save / load |
 | N | Next encounter: mixed skirmish, striker drill, archer drill, brute drill, goblin training |
@@ -216,6 +232,11 @@ game/
   magic/       attributes, ranks, spells, catalog, casting, spellbook
   equipment/   weapons, catalog, loadout (equipment slots)
   items/       definitions, catalog, inventory, loot tables, ground loot, item actions
+  events/      domain events + synchronous event bus
+  npcs/        NPC definitions, catalog, runtime registry
+  dialogue/    dialogue data model, conversations, prototype dialogue
+  quests/      quest model, quest log, turn-in service, prototype quests
+  campaign.py  saved story state (quests, NPCs, flags, reward ledger)
   entities/    player, enemy (shared AI driver), archetypes (striker/archer/brute)
   progression/ experience curve, per-level stat growth
   world/       world clock and active events
