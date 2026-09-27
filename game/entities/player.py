@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Iterable, Optional
+from typing import Dict, Iterable, Optional
 
 from game.core.combat import Attack, AttackOutcome, AttackResult, Cooldown, DamageType, try_attack
 from game.core.defense import GuardProfile
 from game.core.entity import DeathContext, Entity
 from game.core.stats import Stats
 from game.core.vector import Vec2
-from game.equipment.loadout import Equipment
+from game.equipment.loadout import Equipment, Equippable, EquipSlot
 from game.equipment.weapons import Weapon
+from game.items.inventory import DEFAULT_CAPACITY, Inventory
 from game.magic.attributes import MagicAttribute
 from game.magic.casting import cast_spell
 from game.magic.catalog import SPELLS
@@ -70,6 +71,7 @@ class Player(Entity):
         curve: Optional[ProgressionCurve] = None,
         growth: Optional[StatGrowth] = None,
         magic_attributes: Iterable[MagicAttribute] = (),
+        inventory_capacity: int = DEFAULT_CAPACITY,
     ) -> None:
         super().__init__(
             name,
@@ -86,6 +88,9 @@ class Player(Entity):
         self.attack_cooldown = Cooldown()
         self.equipment = Equipment()
         self.spellbook = SpellBook()
+        self.inventory = Inventory(inventory_capacity)
+        # Attribute bonuses currently applied to ``stats`` by equipment.
+        self._applied_modifiers: Dict[str, float] = {}
 
     @property
     def xp(self) -> int:
@@ -120,15 +125,52 @@ class Player(Entity):
     def weapon(self) -> Optional[Weapon]:
         return self.equipment.weapon
 
-    def equip(self, weapon: Weapon) -> Optional[Weapon]:
-        previous = self.equipment.equip(weapon)
-        if not weapon.can_block:
+    def equip(self, item: Equippable) -> Optional[Equippable]:
+        """Equip a weapon or armor piece directly (no inventory involved).
+
+        Returns what it replaced. For inventory-aware equipping use
+        ``game.items.actions.equip_from_inventory``.
+        """
+        previous = self.equipment.equip(item)
+        self._refresh_equipment_modifiers()
+        if not self.guard_profile().can_block:
             self.stop_block()
         return previous
 
-    def unequip(self) -> Optional[Weapon]:
-        self.stop_block()
-        return self.equipment.unequip()
+    def unequip(self, slot: EquipSlot = EquipSlot.MAIN_HAND) -> Optional[Equippable]:
+        if slot is EquipSlot.MAIN_HAND:
+            self.stop_block()
+        item = self.equipment.unequip(slot)
+        self._refresh_equipment_modifiers()
+        return item
+
+    def _refresh_equipment_modifiers(self) -> None:
+        """Apply only the *difference* between the new and the applied
+        bonuses, rounded, so repeated equip/unequip can never drift or
+        inflate stats."""
+        new = self.equipment.total_modifiers()
+        for name in set(new) | set(self._applied_modifiers):
+            delta = new.get(name, 0.0) - self._applied_modifiers.get(name, 0.0)
+            if delta:
+                value = round(getattr(self.stats, name) + delta, 6)
+                setattr(self.stats, name, max(0.0, value))
+        self._applied_modifiers = new
+
+    @property
+    def equipment_bonuses(self) -> Dict[str, float]:
+        return dict(self._applied_modifiers)
+
+    def base_stats(self) -> Stats:
+        """Stats without equipment bonuses (what gets saved)."""
+        data = self.stats.to_dict()
+        for name, value in self._applied_modifiers.items():
+            data[name] = max(0.0, round(data[name] - value, 6))
+        return Stats.from_dict(data)
+
+    def owned_count(self, item_id: str) -> int:
+        """Copies held in the inventory plus equipped ones."""
+        equipped = sum(1 for item in self.equipment.items().values() if item.item_id == item_id)
+        return self.inventory.count(item_id) + equipped
 
     def guard_profile(self) -> GuardProfile:
         return self.equipment.guard_profile()
