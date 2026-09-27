@@ -1,4 +1,7 @@
-"""Pygame front-end: keyboard/mouse -> PlayerInput, GameSession -> shapes.
+"""Pygame front-end: keyboard/mouse -> PlayerInput, a session -> shapes.
+
+Two modes: the zone world (``WorldSession``, default) and the encounter
+sandbox (``GameSession``, ``--arena``).
 
 This is the only module that imports Pygame. It holds no game rules.
 """
@@ -21,7 +24,9 @@ from game.presentation.dialogue_panel import draw_dialogue, handle_dialogue_key,
 from game.presentation.inventory_panel import InventoryPanel
 from game.magic.casting import check_spell_requirements
 from game.persistence.save_manager import SaveManager
+from game.play import PlaySession
 from game.session import Arena, GameSession, PlayerInput, outcome_text
+from game.world_session import WorldSession
 
 WIDTH, HEIGHT = 800, 600
 FPS = 60
@@ -39,6 +44,8 @@ BLACK = (20, 20, 20)
 DARK_RED = (90, 25, 25)
 
 PURPLE = (170, 90, 220)
+DARK_BLUE = (25, 35, 70)
+GOLD = (230, 200, 90)
 BROWN = (150, 80, 40)
 ENEMY_COLOURS = {"goblin": RED, "striker": RED, "archer": PURPLE, "brute": BROWN}
 # Small debug tags drawn above enemies.
@@ -119,7 +126,7 @@ def draw_bar(screen: pygame.Surface, x: int, y: int, w: int, h: int, fraction: f
     pygame.draw.rect(screen, colour, (x, y, int(w * max(0.0, min(1.0, fraction))), h))
 
 
-def defense_label(session: GameSession) -> str:
+def defense_label(session: PlaySession) -> str:
     d = session.player.defense
     if d.is_dodging:
         state = "DODGING"
@@ -137,7 +144,7 @@ def defense_label(session: GameSession) -> str:
     return f"Defense: {state}" + (f"  ({', '.join(cooldowns)})" if cooldowns else "")
 
 
-def hud_lines(session: GameSession) -> List[Tuple[str, Tuple[int, int, int]]]:
+def hud_lines(session: PlaySession) -> List[Tuple[str, Tuple[int, int, int]]]:
     player = session.player
     s = player.stats
     weapon = player.weapon
@@ -168,8 +175,17 @@ def hud_lines(session: GameSession) -> List[Tuple[str, Tuple[int, int, int]]]:
     return lines
 
 
-def encounter_lines(session: GameSession) -> List[Tuple[str, Tuple[int, int, int]]]:
-    encounter = session.encounter
+def encounter_lines(session: PlaySession) -> List[Tuple[str, Tuple[int, int, int]]]:
+    lines = []
+    if isinstance(session, WorldSession):
+        zone = session.zone_definition
+        lines.append((f"{zone.name} [{'SAFE' if zone.is_safe else 'HOSTILE'}]", GREEN if zone.is_safe else ORANGE))
+    for encounter in session.encounters:
+        lines.extend(_encounter_block(encounter))
+    return lines
+
+
+def _encounter_block(encounter) -> List[Tuple[str, Tuple[int, int, int]]]:
     status_colour = {
         EncounterStatus.ACTIVE: WHITE,
         EncounterStatus.CLEARED: GREEN,
@@ -235,10 +251,32 @@ def draw_enemy(screen: pygame.Surface, small: pygame.font.Font, enemy: Enemy, pl
         screen.blit(label, label.get_rect(midbottom=(rect.centerx, rect.y - 10)))
 
 
-def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, small: Optional[pygame.font.Font] = None) -> None:
+def draw_zone(screen: pygame.Surface, small: pygame.font.Font, session: WorldSession) -> None:
+    """Exits (labelled with their destination) and points of interest."""
+    zone = session.zone_definition
+    for exit_ in zone.exits:
+        area = exit_.area
+        rect = pygame.Rect(int(area.x), int(area.y), int(area.w), int(area.h))
+        pygame.draw.rect(screen, DARK_BLUE, rect)
+        pygame.draw.rect(screen, LIGHT_BLUE, rect, 1)
+        label = small.render(f"to {session.graph.zone(exit_.target_zone).name}", True, LIGHT_BLUE)
+        anchor = (rect.left - 4, rect.centery) if rect.left > WIDTH / 2 else (rect.right + 4, rect.centery)
+        screen.blit(label, label.get_rect(midright=anchor) if rect.left > WIDTH / 2 else label.get_rect(midleft=anchor))
+    discovered = session.campaign.exploration.discovered
+    for poi in zone.points_of_interest:
+        x, y = int(poi.position.x), int(poi.position.y)
+        found = poi.poi_id in discovered
+        pygame.draw.circle(screen, GOLD if found else GREY, (x, y), int(poi.radius), 1)
+        label = small.render(poi.name if found else "? unexplored", True, GOLD if found else GREY)
+        screen.blit(label, label.get_rect(center=(x, y)))
+
+
+def draw(screen: pygame.Surface, font: pygame.font.Font, session: PlaySession, small: Optional[pygame.font.Font] = None) -> None:
     small = small or font
     screen.fill(BLACK)
     player = session.player
+    if isinstance(session, WorldSession):
+        draw_zone(screen, small, session)
 
     for enemy in session.enemies:
         draw_enemy(screen, small, enemy, player)
@@ -258,8 +296,9 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
         if drop.position.distance_to(player.position) <= PICKUP_RADIUS:
             label = small.render("G: pick up", True, YELLOW)
             screen.blit(label, label.get_rect(midbottom=(x, y - 9)))
-    for projectile in session.encounter.projectiles.projectiles:
-        pygame.draw.circle(screen, WHITE, (int(projectile.position.x), int(projectile.position.y)), 4)
+    for encounter in session.encounters:
+        for projectile in encounter.projectiles.projectiles:
+            pygame.draw.circle(screen, WHITE, (int(projectile.position.x), int(projectile.position.y)), 4)
 
     rect = entity_rect(player)
     defense = player.defense
@@ -287,22 +326,38 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
 
     help_lines = (
         "WASD move  SPACE/LMB attack  1-9 spell  E cast  TAB weapon  G talk/pick up  I inventory",
-        "F/RMB block  Q parry  SHIFT dodge  N next encounter  F5 save  F9 load  R restart  ESC quit",
+        "F/RMB block  Q parry  SHIFT dodge  F5 save  F9 load  "
+        + ("R respawn when dead  ESC quit" if isinstance(session, WorldSession) else "N next  R restart  ESC quit"),
     )
     for i, text in enumerate(help_lines):
         screen.blit(font.render(text, True, GREY), (10, HEIGHT - 42 + i * 18))
 
     banner = None
     if not player.is_alive:
-        banner = ("YOU DIED - encounter failed. R to restart", RED)
-    elif session.encounter.status is EncounterStatus.CLEARED and not session.encounter.spec.repeat_on_clear:
+        again = "R to respawn in the village" if isinstance(session, WorldSession) else "R to restart"
+        banner = (f"YOU DIED - {again}", RED)
+    elif isinstance(session, GameSession) and session.encounter.status is EncounterStatus.CLEARED \
+            and not session.encounter.spec.repeat_on_clear:
         banner = ("ENCOUNTER CLEARED - R to restart, N for next", GREEN)
     if banner:
         big = font.render(banner[0], True, banner[1])
         screen.blit(big, big.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
 
 
-def run(save_path: Path, max_frames: Optional[int] = None) -> None:
+def new_session(arena_mode: bool, arena: Arena, encounter_id: str) -> PlaySession:
+    if arena_mode:
+        return GameSession.new(arena=arena, encounter_id=encounter_id)
+    return WorldSession.new()
+
+
+def load_session(result, arena_mode: bool, arena: Arena, encounter_id: str) -> PlaySession:
+    if arena_mode:
+        return GameSession(player=result.player, world=result.world, arena=arena, encounter_id=encounter_id,
+                           campaign=result.campaign)
+    return WorldSession(player=result.player, world=result.world, campaign=result.campaign)
+
+
+def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = False) -> None:
     """Run the demo. ``max_frames`` lets smoke tests exit automatically."""
     # Only the subsystems we use; skipping audio saves memory on small machines.
     pygame.display.init()
@@ -316,7 +371,7 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
         arena = Arena(WIDTH, HEIGHT)
         saves = SaveManager(save_path)
         encounter_id = DEMO_ENCOUNTER_ID
-        session = GameSession.new(arena=arena, encounter_id=encounter_id)
+        session = new_session(arena_mode, arena, encounter_id)
         inputs = InputState()
         panel = InventoryPanel()
 
@@ -339,8 +394,11 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                     elif event.key == pygame.K_ESCAPE:
                         running = False
                     elif event.key == pygame.K_r:
-                        session = GameSession.new(arena=arena, encounter_id=encounter_id)
-                    elif event.key == pygame.K_n:
+                        if isinstance(session, WorldSession):
+                            session.respawn()
+                        else:
+                            session = new_session(arena_mode, arena, encounter_id)
+                    elif event.key == pygame.K_n and arena_mode:
                         encounter_id = next_encounter_id(encounter_id)
                         session = GameSession.new(arena=arena, encounter_id=encounter_id)
                         session.log(f"Encounter: {session.encounter.spec.name}")
@@ -353,10 +411,7 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                     elif event.key == pygame.K_F9:
                         result = saves.load()
                         if result.ok:
-                            session = GameSession(
-                                player=result.player, world=result.world, arena=arena, encounter_id=encounter_id,
-                                campaign=result.campaign,
-                            )
+                            session = load_session(result, arena_mode, arena, encounter_id)
                             session.log("Save loaded")
                         else:
                             session.log(f"Load failed ({result.status.value})")

@@ -13,12 +13,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Magical Conquest prototype")
     parser.add_argument("--save", type=Path, default=DEFAULT_SAVE, help="save file path")
     parser.add_argument("--frames", type=int, default=None, help="exit after N frames (smoke testing)")
+    parser.add_argument("--arena", action="store_true",
+                        help="encounter sandbox (MC-002 to MC-005 scenarios) instead of the zone world")
     args = parser.parse_args()
 
     # Imported here so --help works even without Pygame installed.
     from game.presentation.pygame_app import run
 
-    run(args.save, max_frames=args.frames)
+    run(args.save, max_frames=args.frames, arena_mode=args.arena)
 
 
 if __name__ == "__main__":
