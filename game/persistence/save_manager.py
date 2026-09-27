@@ -31,7 +31,9 @@ from game.world.world_state import WorldState
 # v3: MC-004 replaces equipped_weapon with equipment {slot: item_id}, adds
 #     inventory [{item, qty}]; "stats" are now *base* stats (no gear bonuses)
 # v4: MC-005 adds "campaign" {quests, npcs, flags, ledger}
-SAVE_SCHEMA_VERSION = 4
+# v5: MC-006 adds campaign.exploration {visited_zones, discovered, cleared}
+#     and campaign.location {zone, x, y} (null = start of the world)
+SAVE_SCHEMA_VERSION = 5
 
 
 class LoadStatus(str, Enum):
@@ -147,7 +149,16 @@ def migrate_v3_to_v4(data: Dict[str, Any]) -> Dict[str, Any]:
     return {**data, "campaign": Campaign().to_dict(), "schema_version": 4}
 
 
-_MIGRATIONS = {1: migrate_v1_to_v2, 2: migrate_v2_to_v3, 3: migrate_v3_to_v4}
+def migrate_v4_to_v5(data: Dict[str, Any]) -> Dict[str, Any]:
+    """MC-005 saves predate zones: nothing explored, start at the village."""
+    campaign = data.get("campaign")
+    if not isinstance(campaign, dict):
+        raise TypeError("campaign must be an object")
+    campaign = {**campaign, "exploration": {"visited_zones": [], "discovered": [], "cleared": []}, "location": None}
+    return {**data, "campaign": campaign, "schema_version": 5}
+
+
+_MIGRATIONS = {1: migrate_v1_to_v2, 2: migrate_v2_to_v3, 3: migrate_v3_to_v4, 4: migrate_v4_to_v5}
 
 
 def build_save(player: Player, world: WorldState, campaign: Optional[Campaign] = None) -> Dict[str, Any]:
