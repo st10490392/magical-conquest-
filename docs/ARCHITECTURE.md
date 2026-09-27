@@ -21,7 +21,8 @@ Dependencies point one way only, and there are no circular imports.
 | `game.equipment` | `core` | Pygame, files, magic |
 | `game.progression` | `core.stats` | Pygame, files |
 | `game.ai` | `core` | Pygame, files, concrete enemy types |
-| `game.entities` | `core`, `ai`, `magic`, `equipment`, `progression` | Pygame, files |
+| `game.items` | `core`, `equipment`, `entities.player` (actions only) | Pygame, files |
+| `game.entities` | `core`, `ai`, `magic`, `equipment`, `items.inventory`, `progression` | Pygame, files |
 | `game.encounters` | `ai`, `entities`, `core` | Pygame, files, session |
 | `game.world` | the standard library | rendering, entities, input |
 | `game.persistence` | entities, world, JSON | Pygame |
@@ -304,6 +305,21 @@ parrying the moment a wind-up starts is always too early.
   `GameSession.new()` still defaults to goblin training; the Pygame demo
   starts on `mixed_skirmish`.
 
+## Items, loot, inventory and equipment (MC-004)
+
+See [ITEMS_AND_LOOT.md](ITEMS_AND_LOOT.md) for the full reference. In
+short:
+
+- Items are frozen `ItemDefinition`s with stable IDs. Runtime state lives in
+  `Inventory` and `Equipment`.
+- `Equipment` is slot-based. `Player` applies equipment stat modifiers as a
+  rounded *difference*, so the change is reversible, and
+  `player.base_stats()` is what gets saved.
+- Every inventory and item action returns an explicit result, and a failure
+  changes nothing.
+- Loot tables use an injected RNG. `Encounter.take_defeated()` is the single
+  "enemy died" hook the session uses to grant XP and spawn `GroundLoot`.
+
 ## Progression
 
 `ProgressionCurve` computes the XP needed for the next level as
@@ -353,7 +369,9 @@ registry and the clock exist.
   weapon, which is exactly what an MC-001 character could do. Any other
   version is rejected as `UNSUPPORTED_VERSION`.
 - Cooldowns and defensive timers are not saved; they reset on load.
-- MC-003 doesn't change the save format (it is still v2). Encounters and AI
+- **v3 (MC-004):** `stats` are base stats (no equipment bonuses), and the
+  save adds `equipment` and `inventory`. v2 migrates.
+- MC-003 didn't change the save format (it stayed v2). Encounters and AI
   state (telegraphs, recovery, stagger) are transient and never saved.
   Loading a save restarts the current encounter with the loaded player.
 

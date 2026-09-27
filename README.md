@@ -91,6 +91,22 @@ rules before they move to a more capable 3D engine.
 - **Pygame demo:** starts with a 3-enemy mixed skirmish. You can also cycle to
   single-archetype drills and the MC-002 goblin training loop.
 
+### MC-004: items, loot, inventory and equipment
+
+- **Items:** data-driven definitions (weapon, armor, consumable, material,
+  quest and misc), with prototype rarity tiers that scale value only.
+- **Inventory:** a 20-slot inventory with stacking, stack limits, capacity
+  checks and splitting. Every add and remove is all-or-nothing.
+- **Equipment:** six slots (weapon, head, chest, hands, legs, feet). Armor
+  modifiers are reversible and never inflate stats.
+- **Consumables:** health, mana and stamina potions, capped at your maximums.
+- **Loot:** explicit, seedable loot tables per enemy. Defeated enemies drop
+  loot on the ground; pick it up with **G**, then equip it or use it from the
+  **I** inventory panel.
+- **Saves:** schema v3 (inventory and equipment); v2 saves migrate
+  automatically.
+- See [docs/ITEMS_AND_LOOT.md](docs/ITEMS_AND_LOOT.md).
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -119,10 +135,12 @@ Options:
 | Space / left mouse (hold) | Attack with the equipped weapon (or unarmed) |
 | 1–9 | Select a known spell |
 | E (hold) | Cast the selected spell |
-| Tab | Cycle weapons: sword, greatsword, dagger, spear, staff, unarmed |
+| Tab | Cycle through the weapons you own, then unarmed (the sandbox starts with all five) |
 | F / right mouse (hold) | Block (only with a weapon that can block) |
 | Q | Parry (only with a weapon that can parry) |
 | Shift | Dodge (dashes in your movement direction) |
+| G | Pick up nearby loot |
+| I | Open/close the inventory (pauses the game): Up/Down select, Enter equips/uses/unequips |
 | F5 / F9 | Save / load |
 | N | Next encounter: mixed skirmish, striker drill, archer drill, brute drill, goblin training |
 | R | Restart the current encounter |
@@ -197,6 +215,7 @@ game/
   encounters/  encounter lifecycle + prototype encounter catalog
   magic/       attributes, ranks, spells, catalog, casting, spellbook
   equipment/   weapons, catalog, loadout (equipment slots)
+  items/       definitions, catalog, inventory, loot tables, ground loot, item actions
   entities/    player, enemy (shared AI driver), archetypes (striker/archer/brute)
   progression/ experience curve, per-level stat growth
   world/       world clock and active events
@@ -234,7 +253,8 @@ unsupported.
 - Elemental strengths and weaknesses (elements are tracked, but they don't
   change damage yet).
 - How characters acquire attributes (the demo assigns them directly).
-- Armor, the full inventory, weapon durability and upgrades.
+- Stat modifiers for pool maximums (HP, mana, stamina), item durability,
+  crafting and upgrades, and dropping or destroying items.
 - Death penalties: XP or stat loss, loot loss, event elimination and respawn
   rules. The death context is recorded, but nothing acts on it yet.
 - Enemy blocking, parrying and dodging. Enemies telegraph, but never defend
