@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from game.campaign import Campaign
 from game.core.stats import Stats
 from game.core.vector import Vec2
 from game.entities.player import Player
@@ -29,7 +30,8 @@ from game.world.world_state import WorldState
 # v2: MC-002 adds magic_attributes, equipped_weapon, known_spells, selected_spell
 # v3: MC-004 replaces equipped_weapon with equipment {slot: item_id}, adds
 #     inventory [{item, qty}]; "stats" are now *base* stats (no gear bonuses)
-SAVE_SCHEMA_VERSION = 3
+# v4: MC-005 adds "campaign" {quests, npcs, flags, ledger}
+SAVE_SCHEMA_VERSION = 4
 
 
 class LoadStatus(str, Enum):
@@ -45,6 +47,7 @@ class LoadResult:
     player: Optional[Player] = None
     world: Optional[WorldState] = None
     error: Optional[str] = None
+    campaign: Optional[Campaign] = None
 
     @property
     def ok(self) -> bool:
@@ -139,14 +142,20 @@ def migrate_v2_to_v3(data: Dict[str, Any]) -> Dict[str, Any]:
     return {**data, "player": player, "schema_version": 3}
 
 
-_MIGRATIONS = {1: migrate_v1_to_v2, 2: migrate_v2_to_v3}
+def migrate_v3_to_v4(data: Dict[str, Any]) -> Dict[str, Any]:
+    """MC-004 saves predate quests: start with an empty campaign."""
+    return {**data, "campaign": Campaign().to_dict(), "schema_version": 4}
 
 
-def build_save(player: Player, world: WorldState) -> Dict[str, Any]:
+_MIGRATIONS = {1: migrate_v1_to_v2, 2: migrate_v2_to_v3, 3: migrate_v3_to_v4}
+
+
+def build_save(player: Player, world: WorldState, campaign: Optional[Campaign] = None) -> Dict[str, Any]:
     return {
         "schema_version": SAVE_SCHEMA_VERSION,
         "player": player_to_dict(player),
         "world": world.to_dict(),
+        "campaign": (campaign or Campaign()).to_dict(),
     }
 
 
@@ -165,9 +174,10 @@ def parse_save(data: Any) -> LoadResult:
             data = _MIGRATIONS[data["schema_version"]](data)
         player = player_from_dict(data["player"])
         world = WorldState.from_dict(data["world"])
+        campaign = Campaign.from_dict(data["campaign"])
     except (KeyError, TypeError, ValueError) as exc:
         return LoadResult(LoadStatus.MALFORMED, error=f"{type(exc).__name__}: {exc}")
-    return LoadResult(LoadStatus.OK, player, world)
+    return LoadResult(LoadStatus.OK, player, world, campaign=campaign)
 
 
 class SaveManager:
@@ -179,10 +189,10 @@ class SaveManager:
     def exists(self) -> bool:
         return self.path.is_file()
 
-    def save(self, player: Player, world: WorldState) -> None:
+    def save(self, player: Player, world: WorldState, campaign: Optional[Campaign] = None) -> None:
         """Write atomically so a crash mid-save cannot corrupt the old file."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(build_save(player, world), indent=2, allow_nan=False)
+        payload = json.dumps(build_save(player, world, campaign), indent=2, allow_nan=False)
         fd, tmp_name = tempfile.mkstemp(dir=self.path.parent, prefix=".save-", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
