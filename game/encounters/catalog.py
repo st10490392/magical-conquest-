@@ -20,6 +20,11 @@ ENCOUNTERS: Dict[str, EncounterSpec] = {
         EncounterSpec("striker_drill", "Striker drill", (SpawnSpec("striker", 600, 300),)),
         EncounterSpec("archer_drill", "Archer drill", (SpawnSpec("archer", 620, 300),)),
         EncounterSpec("brute_drill", "Brute drill", (SpawnSpec("brute", 600, 300),)),
+        # MC-005 quest demo: the raider camp waits until you walk up to it.
+        EncounterSpec("quest_camp", "Raider camp (quest demo)", (
+            SpawnSpec("striker", 620, 250),
+            SpawnSpec("striker", 650, 390),
+        ), trigger_range=260, repeat_on_clear=True),
         EncounterSpec("goblin_training", "Goblin training (MC-002)", (SpawnSpec("goblin", 600, 300),),
                       repeat_on_clear=True),
     )

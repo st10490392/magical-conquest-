@@ -16,7 +16,21 @@ from game.ai.states import AIState
 from game.core.combat import AttackOutcome, AttackResult
 from game.core.defense import DefenseAction
 from game.core.entity import DeathRecord
+from game.campaign import Campaign, CampaignContext
 from game.core.vector import Vec2
+from game.dialogue.catalog import get_dialogue
+from game.dialogue.conversation import ChoiceResult, Conversation
+from game.events.bus import EventBus
+from game.events.events import (
+    EnemyDefeated,
+    ItemObtained,
+    LocationReached,
+    NpcInteracted,
+    QuestProgressed,
+    QuestStatusChanged,
+)
+from game.npcs.catalog import get_npc
+from game.npcs.definitions import NpcDefinition, can_interact
 from game.encounters.catalog import get_encounter
 from game.encounters.encounter import CombatEvent, Encounter, EncounterStatus
 from game.entities.enemy import Enemy
@@ -56,6 +70,10 @@ STARTING_KIT = (
 # with the mixed MC-003 encounter instead.
 DEFAULT_ENCOUNTER_ID = "goblin_training"
 
+# Which prototype NPCs stand in which sandbox scenario (MC-006 replaces this
+# with zones).
+SCENARIO_NPCS = {"quest_camp": ("proto_elder", "proto_scout")}
+
 # Order in which TAB cycles weapons; None means unarmed.
 WEAPON_CYCLE = (*WEAPONS.keys(), None)
 
@@ -76,7 +94,7 @@ class PlayerInput:
     dodge: bool = False
     cycle_weapon: bool = False
     select_spell: Optional[int] = None  # 0-based index into the spellbook
-    interact: bool = False  # pick up nearby loot
+    interact: bool = False  # talk to a nearby NPC, else pick up nearby loot
 
 
 @dataclass
@@ -107,9 +125,19 @@ class GameSession:
     ground: GroundLoot = field(default_factory=GroundLoot)
     # Loot randomness; seeded so headless runs are reproducible.
     rng: random.Random = field(default_factory=lambda: random.Random(0))
+    campaign: Campaign = field(default_factory=Campaign)
+    bus: EventBus = field(default_factory=EventBus)
+    conversation: Optional[Conversation] = None
+    talking_to: Optional[NpcDefinition] = None
     _respawn_timer: float = 0.0
 
     def __post_init__(self) -> None:
+        # Quests react to domain events instead of being called by combat.
+        for event_type in (EnemyDefeated, NpcInteracted, LocationReached):
+            self.bus.subscribe(event_type, self.campaign.quests.handle)
+        self.campaign.quests.attach(self.bus.publish)
+        self.bus.subscribe(QuestProgressed, self._on_quest_progress)
+        self.bus.subscribe(QuestStatusChanged, self._on_quest_status)
         if self.encounter is None:
             self.start_encounter(self.encounter_id)
 
@@ -171,7 +199,7 @@ class GameSession:
             self._handle_defense_input(controls)
             self._move_player(dt, controls)
             if controls.interact:
-                self.pick_up_loot()
+                self.interact()
 
         target = self.encounter.nearest_enemy(player.position)
         busy = player.defense.blocking or player.defense.is_dodging
@@ -189,6 +217,9 @@ class GameSession:
             self._on_enemy_defeated(enemy)
         if not player.is_alive and self.last_player_death is None:
             self.last_player_death = player.death
+            self.conversation = None
+            for quest_id in self.campaign.quests.on_player_death():
+                self.log(f"Quest failed: {self.campaign.quests.definitions[quest_id].title}")
         if encounter.is_over and not was_over:
             self._on_encounter_over(encounter)
         if encounter.status is EncounterStatus.CLEARED and encounter.spec.repeat_on_clear:
@@ -224,6 +255,58 @@ class GameSession:
                 self.log(f"Equipped {get_item(candidate).name}")
                 return
 
+    # ------------------------------------------------------- npcs/dialogue
+    @property
+    def npcs(self) -> List[NpcDefinition]:
+        return [get_npc(npc_id) for npc_id in SCENARIO_NPCS.get(self.encounter_id, ())]
+
+    def nearby_npc(self) -> Optional[NpcDefinition]:
+        near = [n for n in self.npcs if can_interact(n, self.player.position, self.player.is_alive)]
+        return min(near, key=lambda n: n.position.distance_to(self.player.position)) if near else None
+
+    def interact(self) -> None:
+        """G: talk to a nearby NPC, otherwise pick up nearby loot."""
+        npc = self.nearby_npc()
+        if npc is not None:
+            self.talk_to(npc.npc_id)
+        else:
+            self.pick_up_loot()
+
+    def dialogue_context(self, npc_id: Optional[str] = None) -> CampaignContext:
+        return CampaignContext(self.player, self.campaign, npc_id, on_item=self._reward_item)
+
+    def talk_to(self, npc_id: str) -> Optional[Conversation]:
+        npc = get_npc(npc_id)
+        if not can_interact(npc, self.player.position, self.player.is_alive):
+            return None
+        self.campaign.npcs.record_interaction(npc_id)
+        self.bus.publish(NpcInteracted(npc_id))  # TALK objectives count this
+        self.talking_to = npc
+        self.conversation = Conversation(get_dialogue(npc.dialogue_id), self.dialogue_context(npc_id), npc.name)
+        return self.conversation
+
+    def choose_dialogue(self, index: int) -> ChoiceResult:
+        if self.conversation is None:
+            return ChoiceResult(False, ("No conversation.",))
+        result = self.conversation.choose(index)
+        for message in result.messages:
+            self.log(message)
+        return result
+
+    def end_conversation(self) -> None:
+        self.conversation = None
+        self.talking_to = None
+
+    def _reward_item(self, item_id: str, quantity: int) -> None:
+        self.bus.publish(ItemObtained(item_id, quantity, "reward"))
+
+    def _on_quest_progress(self, event: QuestProgressed) -> None:
+        title = self.campaign.quests.definitions[event.quest_id].title
+        self.log(f"{title}: {event.count}/{event.required}")
+
+    def _on_quest_status(self, event: QuestStatusChanged) -> None:
+        pass  # dialogue effects already report accept/complete; hook for UI/achievements
+
     # ------------------------------------------------------------ items
     def pick_up_loot(self) -> Optional[PickupStatus]:
         drop = self.ground.nearest(self.player.position)
@@ -232,6 +315,7 @@ class GameSession:
         result = self.ground.pickup(drop.drop_id, lambda item, qty: give_item(self.player, item, qty))
         for item_id, quantity in result.taken:
             self.log(f"Picked up {get_item(item_id).name} x{quantity}")
+            self.bus.publish(ItemObtained(item_id, quantity, "loot"))
         if result.left:
             self.log("Inventory full - some loot left on the ground")
         return result.status
@@ -319,7 +403,8 @@ class GameSession:
             self.log(f"{encounter.spec.name}: failed - press R to restart")
 
     def _on_enemy_defeated(self, enemy: Enemy) -> None:
-        """Single place rewards happen: XP, then a loot drop."""
+        """Single place rewards happen: XP, then a loot drop, then the
+        EnemyDefeated event that quests listen to."""
         self.kills += 1
         gained = self.player.gain_xp(enemy.xp_reward)
         self.log(f"{enemy.name} defeated! +{enemy.xp_reward} XP")
@@ -329,3 +414,4 @@ class GameSession:
             drops = get_loot_table(enemy.loot_table_id).roll(self.rng)
             if self.ground.spawn(enemy.position, drops, get_item):
                 self.log(f"{enemy.name} dropped loot (G to pick up)")
+        self.bus.publish(EnemyDefeated(enemy.entity_id, enemy.archetype, self.encounter_id))

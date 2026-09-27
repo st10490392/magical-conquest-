@@ -17,6 +17,7 @@ from game.encounters.catalog import ENCOUNTERS
 from game.encounters.encounter import EncounterStatus
 from game.entities.enemy import Enemy
 from game.items.ground import PICKUP_RADIUS
+from game.presentation.dialogue_panel import draw_dialogue, handle_dialogue_key, tracker_lines
 from game.presentation.inventory_panel import InventoryPanel
 from game.magic.casting import check_spell_requirements
 from game.persistence.save_manager import SaveManager
@@ -49,7 +50,7 @@ STATE_TAGS = {
     AIState.RETREAT: "retreat",
 }
 
-DEMO_ENCOUNTER_ID = "mixed_skirmish"
+DEMO_ENCOUNTER_ID = "quest_camp"  # MC-005 quest demo; N cycles the rest
 ENCOUNTER_ORDER = tuple(ENCOUNTERS)
 
 
@@ -241,6 +242,16 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
 
     for enemy in session.enemies:
         draw_enemy(screen, small, enemy, player)
+    npc_near = session.nearby_npc()
+    for npc in session.npcs:
+        x, y = int(npc.position.x), int(npc.position.y)
+        pygame.draw.circle(screen, GREEN, (x, y), 16)
+        pygame.draw.circle(screen, WHITE, (x, y), 16, 1)
+        label = small.render(npc.name + (" [quest]" if npc.is_quest_giver else ""), True, GREEN)
+        screen.blit(label, label.get_rect(midtop=(x, y + 18)))
+        if npc is npc_near or (npc_near is not None and npc.npc_id == npc_near.npc_id):
+            prompt = small.render("G: talk", True, YELLOW)
+            screen.blit(prompt, prompt.get_rect(midbottom=(x, y - 18)))
     for drop in session.ground.drops:
         x, y = int(drop.position.x), int(drop.position.y)
         pygame.draw.polygon(screen, YELLOW, [(x, y - 7), (x + 7, y), (x, y + 7), (x - 7, y)])
@@ -266,7 +277,8 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
 
     for i, (text, colour) in enumerate(hud_lines(session)):
         screen.blit(font.render(text, True, colour), (10, 10 + i * 20))
-    for i, (text, colour) in enumerate(encounter_lines(session)):
+    right = encounter_lines(session) + tracker_lines(session)
+    for i, (text, colour) in enumerate(right):
         surface = small.render(text, True, colour)
         screen.blit(surface, (WIDTH - surface.get_width() - 10, 10 + i * 17))
 
@@ -274,7 +286,7 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
         screen.blit(font.render(text, True, GREY), (10, HEIGHT - 66 - i * 18))
 
     help_lines = (
-        "WASD move  SPACE/LMB attack  1-9 spell  E cast  TAB weapon  G pick up  I inventory",
+        "WASD move  SPACE/LMB attack  1-9 spell  E cast  TAB weapon  G talk/pick up  I inventory",
         "F/RMB block  Q parry  SHIFT dodge  N next encounter  F5 save  F9 load  R restart  ESC quit",
     )
     for i, text in enumerate(help_lines):
@@ -316,7 +328,9 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if panel.open and event.key in (pygame.K_ESCAPE, pygame.K_i):
+                    if session.conversation is not None:
+                        handle_dialogue_key(event.key, session)
+                    elif panel.open and event.key in (pygame.K_ESCAPE, pygame.K_i):
                         panel.toggle()
                     elif panel.open:
                         panel.handle_key(event.key, session)
@@ -332,7 +346,7 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                         session.log(f"Encounter: {session.encounter.spec.name}")
                     elif event.key == pygame.K_F5:
                         if session.player.is_alive:
-                            saves.save(session.player, session.world)
+                            saves.save(session.player, session.world, session.campaign)
                             session.log(f"Saved to {saves.path.name}")
                         else:
                             session.log("Cannot save while dead")
@@ -340,7 +354,8 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                         result = saves.load()
                         if result.ok:
                             session = GameSession(
-                                player=result.player, world=result.world, arena=arena, encounter_id=encounter_id
+                                player=result.player, world=result.world, arena=arena, encounter_id=encounter_id,
+                                campaign=result.campaign,
                             )
                             session.log("Save loaded")
                         else:
@@ -349,11 +364,13 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                         inputs.handle_keydown(event.key)
 
             controls = inputs.build()
-            if not panel.open:  # the inventory pauses the prototype
+            paused = panel.open or session.conversation is not None
+            if not paused:  # inventory and dialogue pause the prototype
                 session.update(dt, controls)
             draw(screen, font, session, small)
             if panel.open:
                 panel.draw(screen, font, small, session)
+            draw_dialogue(screen, font, small, session)
             pygame.display.flip()
 
             frames += 1
