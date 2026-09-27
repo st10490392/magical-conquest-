@@ -16,6 +16,8 @@ from game.ai.states import AIState
 from game.encounters.catalog import ENCOUNTERS
 from game.encounters.encounter import EncounterStatus
 from game.entities.enemy import Enemy
+from game.items.ground import PICKUP_RADIUS
+from game.presentation.inventory_panel import InventoryPanel
 from game.magic.casting import check_spell_requirements
 from game.persistence.save_manager import SaveManager
 from game.session import Arena, GameSession, PlayerInput, outcome_text
@@ -70,6 +72,7 @@ class InputState:
         self.dodge = False
         self.cycle_weapon = False
         self.select_spell: Optional[int] = None
+        self.interact = False
 
     def handle_keydown(self, key: int) -> None:
         if key == pygame.K_q:
@@ -80,6 +83,8 @@ class InputState:
             self.cycle_weapon = True
         elif key in SPELL_KEYS:
             self.select_spell = SPELL_KEYS[key]
+        elif key == pygame.K_g:
+            self.interact = True
 
     def build(self) -> PlayerInput:
         keys = pygame.key.get_pressed()
@@ -96,6 +101,7 @@ class InputState:
             dodge=self.dodge,
             cycle_weapon=self.cycle_weapon,
             select_spell=self.select_spell,
+            interact=self.interact,
         )
         self.reset()
         return controls
@@ -144,6 +150,9 @@ def hud_lines(session: GameSession) -> List[Tuple[str, Tuple[int, int, int]]]:
         (f"MP {s.mana:.0f}/{s.max_mana:.0f}   magic power {s.magic_power:.0f}", CYAN),
         (f"ST {s.stamina:.0f}/{s.max_stamina:.0f}", YELLOW),
         (weapon_text, WHITE),
+        (f"Durability {s.durability:g}  Magic res {s.magic_resistance:g}  "
+         f"Bag {player.inventory.used_slots}/{player.inventory.capacity}  "
+         f"Potions HP {player.inventory.count('minor_health_potion')} MP {player.inventory.count('minor_mana_potion')}", GREY),
     ]
     spell = player.spellbook.selected
     if spell is not None:
@@ -232,6 +241,12 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
 
     for enemy in session.enemies:
         draw_enemy(screen, small, enemy, player)
+    for drop in session.ground.drops:
+        x, y = int(drop.position.x), int(drop.position.y)
+        pygame.draw.polygon(screen, YELLOW, [(x, y - 7), (x + 7, y), (x, y + 7), (x - 7, y)])
+        if drop.position.distance_to(player.position) <= PICKUP_RADIUS:
+            label = small.render("G: pick up", True, YELLOW)
+            screen.blit(label, label.get_rect(midbottom=(x, y - 9)))
     for projectile in session.encounter.projectiles.projectiles:
         pygame.draw.circle(screen, WHITE, (int(projectile.position.x), int(projectile.position.y)), 4)
 
@@ -259,8 +274,8 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: GameSession, s
         screen.blit(font.render(text, True, GREY), (10, HEIGHT - 66 - i * 18))
 
     help_lines = (
-        "WASD move  SPACE/LMB attack  1-9 pick spell  E cast  TAB weapon  N next encounter",
-        "F/RMB hold block  Q parry  SHIFT dodge  F5 save  F9 load  R restart  ESC quit",
+        "WASD move  SPACE/LMB attack  1-9 spell  E cast  TAB weapon  G pick up  I inventory",
+        "F/RMB block  Q parry  SHIFT dodge  N next encounter  F5 save  F9 load  R restart  ESC quit",
     )
     for i, text in enumerate(help_lines):
         screen.blit(font.render(text, True, GREY), (10, HEIGHT - 42 + i * 18))
@@ -291,6 +306,7 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
         encounter_id = DEMO_ENCOUNTER_ID
         session = GameSession.new(arena=arena, encounter_id=encounter_id)
         inputs = InputState()
+        panel = InventoryPanel()
 
         frames = 0
         running = True
@@ -300,7 +316,13 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                    if panel.open and event.key in (pygame.K_ESCAPE, pygame.K_i):
+                        panel.toggle()
+                    elif panel.open:
+                        panel.handle_key(event.key, session)
+                    elif event.key == pygame.K_i:
+                        panel.toggle()
+                    elif event.key == pygame.K_ESCAPE:
                         running = False
                     elif event.key == pygame.K_r:
                         session = GameSession.new(arena=arena, encounter_id=encounter_id)
@@ -326,8 +348,12 @@ def run(save_path: Path, max_frames: Optional[int] = None) -> None:
                     else:
                         inputs.handle_keydown(event.key)
 
-            session.update(dt, inputs.build())
+            controls = inputs.build()
+            if not panel.open:  # the inventory pauses the prototype
+                session.update(dt, controls)
             draw(screen, font, session, small)
+            if panel.open:
+                panel.draw(screen, font, small, session)
             pygame.display.flip()
 
             frames += 1
