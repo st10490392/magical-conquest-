@@ -15,7 +15,7 @@ from game.dialogue.model import (
     EffectKind as E,
 )
 
-Q1, Q2 = "proto_clear_camp", "proto_strange_bones"
+Q1, Q2, Q3 = "proto_clear_camp", "proto_strange_bones", "proto_watchtower"
 
 
 def quest_is(quest_id: str, status: str) -> C:
@@ -55,7 +55,7 @@ DIALOGUES: Dict[str, Dialogue] = {
                     Reply("I'll look into it.", "q2_accepted", effects=(Effect(E.ACCEPT_QUEST, Q2),)),
                     Reply("Maybe later."),
                 )),
-                Node("q2_accepted", "The scout waits south of here.", (Reply("Understood."),)),
+                Node("q2_accepted", "The scout keeps watch on the road east of here.", (Reply("Understood."),)),
                 Node("q2_waiting", "Have you spoken with the scout and found three bone shards?", (
                     Reply("Not yet."),
                 )),
@@ -68,12 +68,26 @@ DIALOGUES: Dict[str, Dialogue] = {
             "scout",
             entries=(
                 Entry("bones", (quest_is(Q2, "active|ready_to_turn_in"),)),
+                Entry("tower_turn_in", (quest_is(Q3, "ready_to_turn_in"),)),
+                Entry("tower_waiting", (quest_is(Q3, "active"),)),
+                Entry("tower_offer", (quest_is(Q3, "available|failed"),)),
                 Entry("greet"),
             ),
             nodes=(
                 Node("greet", "Keep your voice down. Raiders patrol the road.", (BYE,)),
                 Node("bones", "The bones? They're scattered around the raider camp. "
                               "The raiders carry shards too.", (Reply("Thanks."),)),
+                Node("tower_offer", "There's an old watchtower past the raider camp in the wilds. "
+                                    "Get eyes on it for me?", (
+                    Reply("I'll go.", "tower_accepted", effects=(Effect(E.ACCEPT_QUEST, Q3),)),
+                    Reply("Not today."),
+                )),
+                Node("tower_accepted", "Head east through the wilds. Watch for a brute near the den.",
+                     (Reply("Understood."),)),
+                Node("tower_waiting", "Reached the watchtower yet?", (Reply("Not yet."),)),
+                Node("tower_turn_in", "You made it there and back. Take these.", (
+                    Reply("Thanks.", effects=(Effect(E.TURN_IN_QUEST, Q3),)),
+                )),
             ),
         ),
     )

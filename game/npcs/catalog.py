@@ -11,9 +11,10 @@ from game.npcs.definitions import NpcDefinition, NpcRole
 NPCS: Dict[str, NpcDefinition] = {
     npc.npc_id: npc
     for npc in (
-        NpcDefinition("proto_elder", "Village Elder", NpcRole.QUEST_GIVER, "elder",
+        NpcDefinition("proto_elder", "Village Elder", NpcRole.QUEST_GIVER, "elder", location_id="proto_village",
                       position=Vec2(260, 240), gives_quests=("proto_clear_camp", "proto_strange_bones")),
-        NpcDefinition("proto_scout", "Scout", NpcRole.SCOUT, "scout", position=Vec2(260, 400)),
+        NpcDefinition("proto_scout", "Scout", NpcRole.SCOUT, "scout", location_id="proto_road",
+                      position=Vec2(260, 400), gives_quests=("proto_watchtower",)),
     )
 }
 

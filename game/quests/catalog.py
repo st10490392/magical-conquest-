@@ -32,6 +32,15 @@ QUESTS: Dict[str, QuestDefinition] = {
             turn_in_npc="proto_elder",
             prerequisites=("proto_clear_camp",),
         ),
+        QuestDefinition(
+            "proto_watchtower",
+            "Eyes on the Wilds",
+            "Reach the old watchtower in the wilds, then report back to the scout.",
+            (QuestObjective("reach_tower", O.REACH, "watchtower", 1, "Reach the watchtower"),),
+            Reward(xp=80, items=(("stamina_tonic", 2),)),
+            giver_npc="proto_scout",
+            turn_in_npc="proto_scout",
+        ),
     )
 }
 

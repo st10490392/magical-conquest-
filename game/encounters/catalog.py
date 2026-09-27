@@ -25,6 +25,16 @@ ENCOUNTERS: Dict[str, EncounterSpec] = {
             SpawnSpec("striker", 620, 250),
             SpawnSpec("striker", 650, 390),
         ), trigger_range=260, repeat_on_clear=True),
+        # MC-006 zone encounters (coordinates inside their 800x600 zone).
+        EncounterSpec("road_ambush", "Road ambush", (
+            SpawnSpec("archer", 520, 140),
+            SpawnSpec("striker", 560, 430),
+        ), trigger_range=230),
+        EncounterSpec("raider_camp", "Raider camp", (
+            SpawnSpec("striker", 540, 250),
+            SpawnSpec("striker", 580, 390),
+        ), trigger_range=250),
+        EncounterSpec("brute_den", "Brute's den", (SpawnSpec("brute", 690, 520),), trigger_range=190),
         EncounterSpec("goblin_training", "Goblin training (MC-002)", (SpawnSpec("goblin", 600, 300),),
                       repeat_on_clear=True),
     )
