@@ -46,6 +46,7 @@ class EnemyArchetype:
     size: float = 40.0
     xp_reward: int = 50
     xp_per_level: int = 15
+    loot_table_id: Optional[str] = None  # defaults to the archetype id
     growth: StatGrowth = field(default_factory=lambda: StatGrowth(
         max_health=10.0, max_mana=0.0, max_stamina=0.0, physical_strength=1.5,
         magic_power=0.0, durability=1.0, magic_resistance=1.0, agility=0.5,
@@ -67,6 +68,7 @@ class EnemyArchetype:
             parry_stagger=self.parry_stagger,
             archetype=self.archetype_id,
             size=self.size,
+            loot_table_id=self.loot_table_id or self.archetype_id,
         )
 
 

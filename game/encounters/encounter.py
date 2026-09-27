@@ -76,6 +76,8 @@ class Encounter:
         self.projectiles = ProjectileSystem()
         self.coordinator = AttackCoordinator(spec.max_melee_attackers)
         self.space = CombatSpace(bounds, self.projectiles, self.coordinator, spec.context, spec.encounter_id)
+        self._reported_dead: set = set()
+        self._defeated: List[Enemy] = []
 
     # ---------------------------------------------------------------- queries
     @property
@@ -121,6 +123,10 @@ class Encounter:
         for hit in self.projectiles.update(dt, world_time, self.spec.context, self.spec.encounter_id):
             events.append(CombatEvent(hit.projectile.owner, hit.projectile.target, hit.result, ranged=True))
         self._separate()
+        for enemy in self.enemies:
+            if not enemy.is_alive and enemy.entity_id not in self._reported_dead:
+                self._reported_dead.add(enemy.entity_id)
+                self._defeated.append(enemy)
 
         if active:
             if not player.is_alive:
@@ -129,6 +135,12 @@ class Encounter:
                 self.status = EncounterStatus.CLEARED
                 self.projectiles.clear()
         return events
+
+    def take_defeated(self) -> List[Enemy]:
+        """Enemies that died since the last call - each reported exactly once
+        (the single hook for XP, loot and, later, quest progress)."""
+        defeated, self._defeated = self._defeated, []
+        return defeated
 
     def _triggered(self, player: Entity) -> bool:
         if self.spec.trigger_range is None:
