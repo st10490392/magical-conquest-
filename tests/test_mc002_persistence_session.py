@@ -110,7 +110,8 @@ class SaveV2Tests(unittest.TestCase):
         self.assertEqual(self.manager.load().status, LoadStatus.MALFORMED)
 
     def test_future_or_weird_versions(self):
-        for version in (3, 0, "2", True, None, [1]):
+        # MC-004: "future" means newer than the current schema, not literally 3.
+        for version in (SAVE_SCHEMA_VERSION + 1, 0, "2", True, None, [1]):
             with self.subTest(version=version):
                 self.write({"schema_version": version, "player": {}, "world": {}})
                 self.assertEqual(self.manager.load().status, LoadStatus.UNSUPPORTED_VERSION)

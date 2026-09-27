@@ -18,14 +18,18 @@ from typing import Any, Dict, Optional
 from game.core.stats import Stats
 from game.core.vector import Vec2
 from game.entities.player import Player
-from game.equipment.catalog import get_weapon
+from game.equipment.slots import EquipSlot
+from game.items.catalog import get_item, item_for
+from game.items.inventory import Inventory
 from game.magic.attributes import parse_attributes
 from game.magic.catalog import get_spell
 from game.world.world_state import WorldState
 
 # v1: MC-001 (id, name, level, xp, position, stats, world)
 # v2: MC-002 adds magic_attributes, equipped_weapon, known_spells, selected_spell
-SAVE_SCHEMA_VERSION = 2
+# v3: MC-004 replaces equipped_weapon with equipment {slot: item_id}, adds
+#     inventory [{item, qty}]; "stats" are now *base* stats (no gear bonuses)
+SAVE_SCHEMA_VERSION = 3
 
 
 class LoadStatus(str, Enum):
@@ -54,9 +58,10 @@ def player_to_dict(player: Player) -> Dict[str, Any]:
         "level": player.level,
         "xp": player.xp,
         "position": {"x": player.position.x, "y": player.position.y},
-        "stats": player.stats.to_dict(),
+        "stats": player.base_stats().to_dict(),
         "magic_attributes": sorted(attribute.value for attribute in player.magic_attributes),
-        "equipped_weapon": player.weapon.weapon_id if player.weapon else None,
+        "equipment": {slot.value: item_for(item).item_id for slot, item in player.equipment.items().items()},
+        "inventory": player.inventory.to_list(),
         "known_spells": [spell.spell_id for spell in player.spellbook.spells],
         "selected_spell": player.spellbook.selected_id,
     }
@@ -75,9 +80,19 @@ def player_from_dict(data: Dict[str, Any]) -> Player:
         position=Vec2(float(position.get("x", 0.0)), float(position.get("y", 0.0))),
         magic_attributes=parse_attributes(data["magic_attributes"]),
     )
-    weapon_id = data["equipped_weapon"]
-    if weapon_id is not None:
-        player.equip(get_weapon(weapon_id))
+    equipment = data["equipment"]
+    if not isinstance(equipment, dict):
+        raise TypeError("equipment must be an object")
+    for slot_name, item_id in equipment.items():
+        slot = EquipSlot(slot_name)
+        item = get_item(item_id)
+        if item.equip_slot is not slot:
+            raise ValueError(f"{item_id} cannot be equipped in {slot_name}")
+        player.equip(item)
+    player.inventory = Inventory.from_list(data["inventory"], get_item, player.inventory.capacity)
+    for item, _ in player.inventory.stacks:
+        if item.unique and player.owned_count(item.item_id) > 1:
+            raise ValueError(f"unique item {item.item_id} is owned twice")
     known = data["known_spells"]
     if not isinstance(known, list):
         raise TypeError("known_spells must be a list")
@@ -111,7 +126,20 @@ def migrate_v1_to_v2(data: Dict[str, Any]) -> Dict[str, Any]:
     return migrated
 
 
-_MIGRATIONS = {1: migrate_v1_to_v2}
+def migrate_v2_to_v3(data: Dict[str, Any]) -> Dict[str, Any]:
+    """MC-002 saves had one weapon slot and no inventory. Weapons carried no
+    stat bonuses, so their stats already are base stats."""
+    player = data.get("player")
+    if not isinstance(player, dict):
+        raise TypeError("player data must be an object")
+    player = dict(player)
+    weapon_id = player.pop("equipped_weapon")
+    player["equipment"] = {} if weapon_id is None else {EquipSlot.MAIN_HAND.value: weapon_id}
+    player["inventory"] = []
+    return {**data, "player": player, "schema_version": 3}
+
+
+_MIGRATIONS = {1: migrate_v1_to_v2, 2: migrate_v2_to_v3}
 
 
 def build_save(player: Player, world: WorldState) -> Dict[str, Any]:
