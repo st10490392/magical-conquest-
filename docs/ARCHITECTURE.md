@@ -26,7 +26,9 @@ Dependencies point one way only, and there are no circular imports.
 | `game.events` | standard library | everything else |
 | `game.npcs`, `game.dialogue` | `core.vector` / standard library | quests, items, Pygame |
 | `game.quests` | `events`, `progression.rewards`, `entities.player` (service) | dialogue, Pygame |
-| `game.campaign` | quests, npcs, dialogue model, items | Pygame, session |
+| `game.campaign` | quests, npcs, dialogue model, items, world exploration | Pygame, session |
+| `game.world` (zones) | `core.vector`, encounter/NPC catalogs (validation) | sessions, Pygame |
+| `game.play` / `session` / `world_session` | everything above | Pygame |
 | `game.encounters` | `ai`, `entities`, `core` | Pygame, files, session |
 | `game.world` | the standard library | rendering, entities, input |
 | `game.persistence` | entities, world, JSON | Pygame |
@@ -339,6 +341,26 @@ See [NPCS_DIALOGUE_QUESTS.md](NPCS_DIALOGUE_QUESTS.md). In short:
 - `Campaign` (quests, NPCs, flags, ledger) is the saved story state.
   `GameSession` wires it to the bus.
 
+## Sessions (refactored in MC-006)
+
+- `game.play.PlaySession` is the shared, headless play loop: input,
+  combat, spells, defense, weapon cycling, dialogue, loot, item actions,
+  enemy-defeat rewards, event wiring and reporting.
+- It has three hooks: the `encounters` and `npcs` properties, and the
+  `_after_update` / `_on_encounter_over` methods.
+- `game.session.GameSession` is the single-encounter arena sandbox. Its
+  public API is unchanged, so every MC-002 to MC-005 test still uses it.
+- `game.world_session.WorldSession` is the zone world: travel, discovery,
+  safe zones and respawn.
+
+## Zones and exploration (MC-006)
+
+See [WORLD_AND_ZONES.md](WORLD_AND_ZONES.md). A validated `WorldGraph`
+defines the zones (exits, spawns, encounter placements with respawn rules,
+and points of interest). A `ZoneInstance` holds the live encounters and
+loot of the current zone, and it is rebuilt on every entry.
+`Campaign.exploration` and `Campaign.location` are saved.
+
 ## Progression
 
 `ProgressionCurve` computes the XP needed for the next level as
@@ -388,6 +410,8 @@ registry and the clock exist.
   weapon, which is exactly what an MC-001 character could do. Any other
   version is rejected as `UNSUPPORTED_VERSION`.
 - Cooldowns and defensive timers are not saved; they reset on load.
+- **v5 (MC-006):** adds `campaign.exploration` and `campaign.location`. v4
+  migrates, starting in the village.
 - **v4 (MC-005):** adds a `campaign` section (quests, npcs, flags, ledger),
   checked for consistency between completed quests and the ledger. v3
   migrates with an empty campaign.

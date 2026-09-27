@@ -122,6 +122,23 @@ rules before they move to a more capable 3D engine.
   choose replies, and a quest tracker sits in the top right.
 - See [docs/NPCS_DIALOGUE_QUESTS.md](docs/NPCS_DIALOGUE_QUESTS.md).
 
+### MC-006: zones and world navigation
+
+- **Three connected prototype zones:** a safe village, a road and the wilds.
+  Walk into the edge exits to travel.
+- **Placements:** encounters and NPCs are placed per zone. Encounters respawn
+  on re-entry, except the brute's den, which stays cleared.
+- **Exploration:** points of interest give a one-time discovery XP reward and
+  publish `LocationReached` for REACH quest objectives ("Eyes on the Wilds",
+  from the scout).
+- **Safe zones:** attacks are disabled in the village.
+- **Respawn:** R after death revives you in the village, with no penalties
+  yet.
+- **Saves:** schema v5 (location and exploration); v4 migrates.
+- `python main.py` opens the world; `python main.py --arena` keeps the
+  encounter sandbox.
+- See [docs/WORLD_AND_ZONES.md](docs/WORLD_AND_ZONES.md).
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -134,7 +151,8 @@ pip install -r requirements.txt     # or: sudo pacman -S python-pygame
 ## Running the demo
 
 ```sh
-python main.py
+python main.py            # the zone world (MC-006+)
+python main.py --arena    # the encounter sandbox (MC-002 to MC-005 scenarios)
 ```
 
 Options:
@@ -158,8 +176,8 @@ Options:
 | 1–9 (in dialogue) | Choose a reply; Esc or G leaves (dialogue pauses the game) |
 | I | Open/close the inventory (pauses the game): Up/Down select, Enter equips/uses/unequips |
 | F5 / F9 | Save / load |
-| N | Next encounter: mixed skirmish, striker drill, archer drill, brute drill, goblin training |
-| R | Restart the current encounter |
+| N (arena only) | Next scenario: quest camp, mixed skirmish, the drills, goblin training |
+| R | Arena: restart the encounter. World: respawn in the village after dying |
 | Esc | Quit |
 
 You can't attack while blocking or dodging. Blocking halves your movement
@@ -236,7 +254,11 @@ game/
   npcs/        NPC definitions, catalog, runtime registry
   dialogue/    dialogue data model, conversations, prototype dialogue
   quests/      quest model, quest log, turn-in service, prototype quests
-  campaign.py  saved story state (quests, NPCs, flags, reward ledger)
+  campaign.py  saved progress (quests, NPCs, flags, reward ledger, exploration, location)
+  world/       world clock + zones, world graph, exploration, zone instances
+  play.py      shared headless play loop (PlaySession)
+  session.py   arena sandbox (GameSession)
+  world_session.py  zone world (WorldSession)
   entities/    player, enemy (shared AI driver), archetypes (striker/archer/brute)
   progression/ experience curve, per-level stat growth
   world/       world clock and active events
