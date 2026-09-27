@@ -8,6 +8,7 @@ from functools import cached_property
 
 from game.core.combat import Attack, DamageType
 from game.core.defense import MAX_BLOCK_CAPABILITY, GuardProfile
+from game.equipment.slots import NO_MODIFIERS, EquipSlot, StatModifiers
 
 
 class WeaponType(str, Enum):
@@ -48,6 +49,23 @@ class Weapon:
     @property
     def can_block(self) -> bool:
         return self.block_capability > 0.0
+
+    # A bare Weapon can be equipped directly (MC-002 API); items wrap it too.
+    @property
+    def item_id(self) -> str:
+        return self.weapon_id
+
+    @property
+    def equip_slot(self) -> EquipSlot:
+        return EquipSlot.MAIN_HAND
+
+    @property
+    def modifiers(self) -> StatModifiers:
+        return NO_MODIFIERS
+
+    @property
+    def weapon(self) -> "Weapon":
+        return self
 
     @cached_property
     def attack(self) -> Attack:
