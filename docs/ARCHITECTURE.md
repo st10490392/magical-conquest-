@@ -26,7 +26,8 @@ Dependencies point one way only, and there are no circular imports.
 | `game.events` | standard library | everything else |
 | `game.npcs`, `game.dialogue` | `core.vector` / standard library | quests, items, Pygame |
 | `game.quests` | `events`, `progression.rewards`, `entities.player` (service) | dialogue, Pygame |
-| `game.campaign` | quests, npcs, dialogue model, items, world exploration | Pygame, session |
+| `game.economy` | `items`, `entities.player` (transactions) | quests, sessions, Pygame |
+| `game.campaign` | quests, npcs, dialogue model, items, world exploration, economy | Pygame, session |
 | `game.world` (zones) | `core.vector`, encounter/NPC catalogs (validation) | sessions, Pygame |
 | `game.play` / `session` / `world_session` | everything above | Pygame |
 | `game.encounters` | `ai`, `entities`, `core` | Pygame, files, session |
@@ -361,6 +362,17 @@ and points of interest). A `ZoneInstance` holds the live encounters and
 loot of the current zone, and it is rebuilt on every entry.
 `Campaign.exploration` and `Campaign.location` are saved.
 
+## Economy and reward hooks (MC-007)
+
+See [ECONOMY_AND_PROGRESSION.md](ECONOMY_AND_PROGRESSION.md).
+
+- `Wallet`, `PricePolicy` and `Merchant` give validated, atomic buy/sell with
+  explicit results.
+- Blacksmith services are SHOP and INSPECT only; upgrades are an extension
+  point.
+- `PlaySession.grant()` plus `RewardLedger` handle once-only rewards from
+  quests, exploration and encounter clears.
+
 ## Progression
 
 `ProgressionCurve` computes the XP needed for the next level as
@@ -410,6 +422,8 @@ registry and the clock exist.
   weapon, which is exactly what an MC-001 character could do. Any other
   version is rejected as `UNSUPPORTED_VERSION`.
 - Cooldowns and defensive timers are not saved; they reset on load.
+- **v6 (MC-007):** adds `campaign.wallet` and `campaign.merchants`. v5 migrates
+  with an empty wallet.
 - **v5 (MC-006):** adds `campaign.exploration` and `campaign.location`. v4
   migrates, starting in the village.
 - **v4 (MC-005):** adds a `campaign` section (quests, npcs, flags, ledger),

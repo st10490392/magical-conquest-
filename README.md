@@ -139,6 +139,19 @@ rules before they move to a more capable 3D engine.
   encounter sandbox.
 - See [docs/WORLD_AND_ZONES.md](docs/WORLD_AND_ZONES.md).
 
+### MC-007: economy and progression
+
+- **Coins:** one prototype currency; the balance can never go negative.
+- **Merchants:** a Shopkeeper and a Blacksmith in the village, with atomic
+  buy/sell, limited stock, and prices from item value × rarity × margin.
+- **Blacksmith:** sells gear and **inspects** your equipped gear.
+  Upgrades are deliberately not implemented (only an extension point exists).
+- **Rewards:** enemies pay coins, quests pay XP, coins and items,
+  exploration pays XP, and the brute's den pays a one-time clear reward. Every
+  once-only reward goes through the reward ledger.
+- **Saves:** schema v6 (wallet and merchant stock); v5 migrates.
+- See [docs/ECONOMY_AND_PROGRESSION.md](docs/ECONOMY_AND_PROGRESSION.md).
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -175,6 +188,7 @@ Options:
 | G | Talk to a nearby NPC, otherwise pick up nearby loot |
 | 1–9 (in dialogue) | Choose a reply; Esc or G leaves (dialogue pauses the game) |
 | I | Open/close the inventory (pauses the game): Up/Down select, Enter equips/uses/unequips |
+| (in a shop) | Left/Right tab (Buy/Sell/Inspect), Up/Down select, Enter buy/sell one, Esc leave |
 | F5 / F9 | Save / load |
 | N (arena only) | Next scenario: quest camp, mixed skirmish, the drills, goblin training |
 | R | Arena: restart the encounter. World: respawn in the village after dying |
@@ -254,7 +268,8 @@ game/
   npcs/        NPC definitions, catalog, runtime registry
   dialogue/    dialogue data model, conversations, prototype dialogue
   quests/      quest model, quest log, turn-in service, prototype quests
-  campaign.py  saved progress (quests, NPCs, flags, reward ledger, exploration, location)
+  economy/     wallet, pricing, merchants, blacksmith services, prototype shops
+  campaign.py  saved progress (quests, NPCs, flags, ledger, exploration, location, wallet, stock)
   world/       world clock + zones, world graph, exploration, zone instances
   play.py      shared headless play loop (PlaySession)
   session.py   arena sandbox (GameSession)
