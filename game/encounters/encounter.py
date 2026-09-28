@@ -19,6 +19,7 @@ from game.core.entity import DeathContext, Entity
 from game.core.vector import Vec2
 from game.entities.archetypes import create_enemy
 from game.entities.enemy import Enemy
+from game.progression.rewards import Reward
 
 
 class EncounterStatus(str, Enum):
@@ -48,6 +49,9 @@ class EncounterSpec:
     group_alert: bool = True
     # Rebuild the encounter shortly after it is cleared (training loops).
     repeat_on_clear: bool = False
+    # Once-only reward for clearing it (granted by the session via the
+    # reward ledger; only meaningful for encounters that never respawn).
+    clear_reward: Optional["Reward"] = None
     context: DeathContext = DeathContext.OPEN_WORLD
 
 

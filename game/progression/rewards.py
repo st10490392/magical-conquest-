@@ -16,6 +16,20 @@ from game.entities.player import Player
 from game.items.definitions import ItemDefinition
 
 
+class RewardSource(str, Enum):
+    """Where a once-only reward comes from; the value prefixes ledger keys."""
+
+    QUEST = "quest"
+    EXPLORATION = "discovery"
+    ENCOUNTER = "encounter"
+
+
+def reward_key(source: RewardSource, ident: str) -> str:
+    if not ident:
+        raise ValueError("reward ident is required")
+    return f"{source.value}:{ident}"
+
+
 @dataclass(frozen=True)
 class Reward:
     """PROTOTYPE amounts - NON-FINAL."""

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
-from game.progression.rewards import Reward
+from game.progression.rewards import Reward, RewardSource, reward_key
 
 
 class QuestStatus(str, Enum):
@@ -76,7 +76,7 @@ class QuestDefinition:
 
     @property
     def reward_key(self) -> str:
-        return f"quest:{self.quest_id}"
+        return reward_key(RewardSource.QUEST, self.quest_id)
 
     def objective(self, objective_id: str) -> QuestObjective:
         for objective in self.objectives:

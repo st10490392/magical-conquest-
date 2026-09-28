@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Dict
 
 from game.encounters.encounter import EncounterSpec, SpawnSpec
+from game.progression.rewards import Reward
 
 ENCOUNTERS: Dict[str, EncounterSpec] = {
     spec.encounter_id: spec
@@ -34,7 +35,8 @@ ENCOUNTERS: Dict[str, EncounterSpec] = {
             SpawnSpec("striker", 540, 250),
             SpawnSpec("striker", 580, 390),
         ), trigger_range=250),
-        EncounterSpec("brute_den", "Brute's den", (SpawnSpec("brute", 690, 520),), trigger_range=190),
+        EncounterSpec("brute_den", "Brute's den", (SpawnSpec("brute", 690, 520),), trigger_range=190,
+                      clear_reward=Reward(xp=60, currency=40, items=(("iron_scrap", 2),))),
         EncounterSpec("goblin_training", "Goblin training (MC-002)", (SpawnSpec("goblin", 600, 300),),
                       repeat_on_clear=True),
     )

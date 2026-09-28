@@ -76,6 +76,7 @@ class Enemy(Entity):
         archetype: str = "basic",
         size: float = 40.0,
         loot_table_id: Optional[str] = None,
+        coins: int = 0,
     ) -> None:
         super().__init__(name, stats, level=level, entity_id=entity_id, position=position, size=size)
         if windup < 0 or alert_time < 0 or parry_stagger < 0:
@@ -91,6 +92,9 @@ class Enemy(Entity):
         self.archetype = archetype
         self.xp_reward = xp_reward
         self.loot_table_id = loot_table_id  # see game.items.loot_tables
+        if isinstance(coins, bool) or not isinstance(coins, int) or coins < 0:
+            raise ValueError("coins must be a non-negative integer")
+        self.coins = coins  # currency paid out when defeated (PROTOTYPE)
 
         self.state = AIState.IDLE
         self.attack_cooldown = Cooldown()
@@ -298,4 +302,5 @@ def create_goblin(level: int = 1, position: Optional[Vec2] = None) -> Enemy:
         position=position,
         archetype="goblin",
         loot_table_id="goblin",
+        coins=2,
     )
