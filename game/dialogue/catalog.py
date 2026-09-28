@@ -94,6 +94,36 @@ DIALOGUES: Dict[str, Dialogue] = {
 }
 
 
+DIALOGUES.update({
+    d.dialogue_id: d
+    for d in (
+        Dialogue(
+            "merchant",
+            entries=(Entry("greet"),),
+            nodes=(
+                Node("greet", "Welcome! Potions, tonics and a little leather. I'll buy your odds and ends too.", (
+                    Reply("Let's trade.", effects=(Effect(E.OPEN_SHOP, "proto_general_store"),)),
+                    BYE,
+                )),
+            ),
+        ),
+        Dialogue(
+            "smith",
+            entries=(Entry("greet"),),
+            nodes=(
+                Node("greet", "Steel and leather for sale. I can also look over what you're wearing.", (
+                    Reply("Show me your wares (and inspect my gear).",
+                          effects=(Effect(E.OPEN_SHOP, "proto_smithy"),)),
+                    Reply("Can you improve my weapon?", "no_upgrades"),
+                    BYE,
+                )),
+                Node("no_upgrades", "Not yet. Come back another time.", (BYE,)),
+            ),
+        ),
+    )
+})
+
+
 def get_dialogue(dialogue_id: str) -> Dialogue:
     try:
         return DIALOGUES[dialogue_id]

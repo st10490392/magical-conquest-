@@ -9,9 +9,12 @@ trigger quest effects without knowing how those systems work.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Mapping, Optional, Set
+from typing import Callable, Dict, Mapping, Optional, Set
 
 from game.dialogue.model import Condition, ConditionKind, Effect, EffectKind
+from game.economy.catalog import MERCHANTS
+from game.economy.merchant import Merchant, MerchantState
+from game.economy.wallet import Wallet
 from game.entities.player import Player
 from game.items.catalog import ITEMS, get_item
 from game.npcs.catalog import NPCS
@@ -41,6 +44,13 @@ class Campaign:
     ledger: RewardLedger = field(default_factory=RewardLedger)
     exploration: Exploration = field(default_factory=Exploration)
     location: Optional[Location] = None  # None: start of the world
+    wallet: Wallet = field(default_factory=Wallet)
+    merchants: Dict[str, MerchantState] = field(default_factory=dict)  # only merchants traded with
+
+    def merchant(self, merchant_id: str) -> Merchant:
+        definition = MERCHANTS[merchant_id]
+        state = self.merchants.setdefault(merchant_id, MerchantState.fresh(definition))
+        return Merchant(definition, state, get_item)
 
     def set_flag(self, flag: str) -> None:
         if not _valid_flag(flag):
@@ -55,6 +65,8 @@ class Campaign:
             "ledger": self.ledger.to_list(),
             "exploration": self.exploration.to_dict(),
             "location": self.location.to_dict() if self.location else None,
+            "wallet": self.wallet.balance,
+            "merchants": {mid: state.to_dict() for mid, state in sorted(self.merchants.items())},
         }
 
     @classmethod
@@ -71,6 +83,8 @@ class Campaign:
             RewardLedger.from_list(data["ledger"]),
             Exploration.from_dict(data["exploration"], WORLD),
             None if data["location"] is None else Location.from_dict(data["location"], WORLD),
+            Wallet(data["wallet"]),
+            _merchants_from_dict(data["merchants"]),
         )
         # Quest completion and the reward ledger must agree, otherwise a save
         # could re-award a quest or lock a quest out forever.
@@ -84,7 +98,22 @@ class Campaign:
                 raise ValueError(f"ledger references unknown quest {key}")
             if kind == "discovery" and ident not in campaign.exploration.discovered:
                 raise ValueError(f"discovery reward {key} claimed but not discovered")
+            if kind == "encounter" and ident not in campaign.exploration.cleared:
+                raise ValueError(f"encounter reward {key} claimed but the encounter is not cleared")
+            if kind not in ("quest", "discovery", "encounter"):
+                raise ValueError(f"unknown reward key {key!r}")
         return campaign
+
+
+def _merchants_from_dict(data) -> Dict[str, MerchantState]:
+    if not isinstance(data, dict):
+        raise TypeError("merchants must be an object")
+    states = {}
+    for merchant_id, state in data.items():
+        if merchant_id not in MERCHANTS:
+            raise ValueError(f"unknown merchant {merchant_id!r}")
+        states[merchant_id] = MerchantState.from_dict(state, MERCHANTS[merchant_id])
+    return states
 
 
 class CampaignContext:
@@ -102,7 +131,7 @@ class CampaignContext:
         self.player = player
         self.campaign = campaign
         self.npc_id = npc_id
-        self.wallet = wallet
+        self.wallet = wallet if wallet is not None else campaign.wallet
         self.on_item = on_item
         self.on_open_shop = on_open_shop
         self.last_turn_in: Optional[TurnInResult] = None

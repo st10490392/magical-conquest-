@@ -284,13 +284,15 @@ class RewardTests(unittest.TestCase):
 
 
 class TurnInTests(unittest.TestCase):
+    # MC-007: quest rewards now pay currency, so turn_in needs the campaign
+    # wallet (paying coins without a wallet is refused rather than dropped).
     def ready_q2(self, capacity=20):
         player = Player("P", inventory_capacity=capacity)
         campaign = Campaign()
         campaign.quests.accept(Q1)
         for i in range(2):
             campaign.quests.handle(EnemyDefeated(str(i), "striker"))
-        self.assertTrue(turn_in(Q1, player, campaign.quests, campaign.ledger, get_item).ok)
+        self.assertTrue(turn_in(Q1, player, campaign.quests, campaign.ledger, get_item, wallet=campaign.wallet).ok)
         campaign.quests.accept(Q2)
         campaign.quests.handle(NpcInteracted("proto_scout"))
         give_item(player, get_item("bone_shard"), 4)
@@ -299,40 +301,40 @@ class TurnInTests(unittest.TestCase):
     def test_turn_in_consumes_items_and_rewards_once(self):
         player, campaign = self.ready_q2()
         xp_before = player.xp
-        result = turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, npc_id="proto_elder")
+        result = turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, npc_id="proto_elder", wallet=campaign.wallet)
         self.assertTrue(result.ok)
         self.assertEqual(player.inventory.count("bone_shard"), 1)
         self.assertEqual(player.inventory.count("leather_jerkin"), 1)
         self.assertEqual(campaign.quests.status(Q2), QuestStatus.COMPLETED)
         self.assertGreater(player.xp + player.level * 1000, xp_before)
-        again = turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, npc_id="proto_elder")
+        again = turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, npc_id="proto_elder", wallet=campaign.wallet)
         self.assertEqual(again.status, TurnInStatus.ALREADY_COMPLETED)
         self.assertEqual(player.inventory.count("leather_jerkin"), 1)
         self.assertEqual(campaign.quests.accept(Q2), QuestActionStatus.ALREADY_COMPLETED)
 
     def test_wrong_npc_and_not_ready(self):
         player, campaign = self.ready_q2()
-        self.assertEqual(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, npc_id="proto_scout").status,
+        self.assertEqual(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, npc_id="proto_scout", wallet=campaign.wallet).status,
                          TurnInStatus.WRONG_NPC)
         player.inventory.remove("bone_shard", 2)
-        self.assertEqual(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item).status, TurnInStatus.NOT_READY)
+        self.assertEqual(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, wallet=campaign.wallet).status, TurnInStatus.NOT_READY)
 
     def test_inventory_full_changes_nothing(self):
         player, campaign = self.ready_q2(capacity=2)
         # Slot 1: the Q1 reward potions, slot 2: 4 shards. Handing over 3 of
         # the 4 shards frees no slot, so the jerkin cannot fit.
         self.assertEqual(player.inventory.free_slots, 0)
-        result = turn_in(Q2, player, campaign.quests, campaign.ledger, get_item)
+        result = turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, wallet=campaign.wallet)
         self.assertEqual(result.status, TurnInStatus.INVENTORY_FULL)
         self.assertEqual(player.inventory.count("bone_shard"), 4)
         self.assertEqual(campaign.quests.status(Q2, player.inventory.count), QuestStatus.READY_TO_TURN_IN)
         player.inventory.remove("minor_health_potion", 2)
-        self.assertTrue(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item).ok)
+        self.assertTrue(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, wallet=campaign.wallet).ok)
 
     def test_ledger_blocks_turn_in_even_if_log_disagrees(self):
         player, campaign = self.ready_q2()
         campaign.ledger._record(QUESTS[Q2].reward_key)
-        self.assertEqual(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item).status,
+        self.assertEqual(turn_in(Q2, player, campaign.quests, campaign.ledger, get_item, wallet=campaign.wallet).status,
                          TurnInStatus.ALREADY_COMPLETED)
 
 

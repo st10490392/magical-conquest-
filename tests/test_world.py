@@ -62,7 +62,8 @@ class ZoneDefinitionTests(unittest.TestCase):
         self.assertEqual(WORLD.zone("proto_wilds").placement("den").respawn, RespawnRule.NEVER)
 
     def test_npc_placement(self):
-        self.assertEqual([n.npc_id for n in npcs_in("proto_village")], ["proto_elder"])
+        # MC-007 added the shopkeeper and blacksmith to the village.
+        self.assertEqual([n.npc_id for n in npcs_in("proto_village")], ["proto_elder", "proto_merchant", "proto_smith"])
         self.assertEqual([n.npc_id for n in npcs_in("proto_road")], ["proto_scout"])
         self.assertEqual(npcs_in("proto_wilds"), [])
 
@@ -79,7 +80,7 @@ class TravelTests(unittest.TestCase):
     def test_starts_in_village_with_elder(self):
         session = WorldSession.new()
         self.assertEqual(session.zone.zone_id, "proto_village")
-        self.assertEqual([n.npc_id for n in session.npcs], ["proto_elder"])
+        self.assertEqual([n.npc_id for n in session.npcs], ["proto_elder", "proto_merchant", "proto_smith"])
         self.assertEqual(session.encounters, [])  # safe zone: no encounters
 
     def test_walking_into_exits_travels_and_publishes_events(self):

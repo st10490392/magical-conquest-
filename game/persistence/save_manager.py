@@ -33,7 +33,8 @@ from game.world.world_state import WorldState
 # v4: MC-005 adds "campaign" {quests, npcs, flags, ledger}
 # v5: MC-006 adds campaign.exploration {visited_zones, discovered, cleared}
 #     and campaign.location {zone, x, y} (null = start of the world)
-SAVE_SCHEMA_VERSION = 5
+# v6: MC-007 adds campaign.wallet (coins) and campaign.merchants (stock)
+SAVE_SCHEMA_VERSION = 6
 
 
 class LoadStatus(str, Enum):
@@ -158,7 +159,17 @@ def migrate_v4_to_v5(data: Dict[str, Any]) -> Dict[str, Any]:
     return {**data, "campaign": campaign, "schema_version": 5}
 
 
-_MIGRATIONS = {1: migrate_v1_to_v2, 2: migrate_v2_to_v3, 3: migrate_v3_to_v4, 4: migrate_v4_to_v5}
+def migrate_v5_to_v6(data: Dict[str, Any]) -> Dict[str, Any]:
+    """MC-006 saves predate currency: an empty wallet, untouched merchants."""
+    campaign = data.get("campaign")
+    if not isinstance(campaign, dict):
+        raise TypeError("campaign must be an object")
+    return {**data, "campaign": {**campaign, "wallet": 0, "merchants": {}}, "schema_version": 6}
+
+
+_MIGRATIONS = {
+    1: migrate_v1_to_v2, 2: migrate_v2_to_v3, 3: migrate_v3_to_v4, 4: migrate_v4_to_v5, 5: migrate_v5_to_v6,
+}
 
 
 def build_save(player: Player, world: WorldState, campaign: Optional[Campaign] = None) -> Dict[str, Any]:

@@ -15,6 +15,10 @@ NPCS: Dict[str, NpcDefinition] = {
                       position=Vec2(260, 240), gives_quests=("proto_clear_camp", "proto_strange_bones")),
         NpcDefinition("proto_scout", "Scout", NpcRole.SCOUT, "scout", location_id="proto_road",
                       position=Vec2(260, 400), gives_quests=("proto_watchtower",)),
+        NpcDefinition("proto_merchant", "Shopkeeper", NpcRole.MERCHANT, "merchant", location_id="proto_village",
+                      position=Vec2(520, 170)),
+        NpcDefinition("proto_smith", "Blacksmith", NpcRole.BLACKSMITH, "smith", location_id="proto_village",
+                      position=Vec2(540, 440)),
     )
 }
 
