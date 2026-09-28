@@ -25,6 +25,7 @@ from game.presentation.inventory_panel import InventoryPanel
 from game.presentation.shop_panel import ShopPanel
 from game.magic.casting import check_spell_requirements
 from game.persistence.save_manager import SaveManager
+from game.persistence.session_io import save_session
 from game.play import PlaySession
 from game.session import Arena, GameSession, PlayerInput, outcome_text
 from game.world_session import WorldSession
@@ -286,8 +287,12 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: PlaySession, s
         x, y = int(npc.position.x), int(npc.position.y)
         pygame.draw.circle(screen, GREEN, (x, y), 16)
         pygame.draw.circle(screen, WHITE, (x, y), 16, 1)
-        label = small.render(npc.name + (" [quest]" if npc.is_quest_giver else ""), True, GREEN)
+        label = small.render(npc.name, True, GREEN)
         screen.blit(label, label.get_rect(midtop=(x, y + 18)))
+        marker = session.npc_marker(npc)
+        if marker:
+            mark = font.render(marker, True, GOLD)
+            screen.blit(mark, mark.get_rect(center=(x, y)))
         if npc is npc_near or (npc_near is not None and npc.npc_id == npc_near.npc_id):
             prompt = small.render("G: talk", True, YELLOW)
             screen.blit(prompt, prompt.get_rect(midbottom=(x, y - 18)))
@@ -323,15 +328,10 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: PlaySession, s
         screen.blit(surface, (WIDTH - surface.get_width() - 10, 10 + i * 17))
 
     for i, text in enumerate(reversed(session.messages)):
-        screen.blit(font.render(text, True, GREY), (10, HEIGHT - 66 - i * 18))
+        screen.blit(font.render(text, True, GREY), (10, HEIGHT - 48 - i * 18))
 
-    help_lines = (
-        "WASD move  SPACE/LMB attack  1-9 spell  E cast  TAB weapon  G talk/pick up  I inventory",
-        "F/RMB block  Q parry  SHIFT dodge  F5 save  F9 load  "
-        + ("R respawn when dead  ESC quit" if isinstance(session, WorldSession) else "N next  R restart  ESC quit"),
-    )
-    for i, text in enumerate(help_lines):
-        screen.blit(font.render(text, True, GREY), (10, HEIGHT - 42 + i * 18))
+    hint = "F1 controls   G talk/pick up   I inventory   F5 save   F9 load"
+    screen.blit(font.render(hint, True, GREY), (10, HEIGHT - 24))
 
     banner = None
     if not player.is_alive:
@@ -343,6 +343,36 @@ def draw(screen: pygame.Surface, font: pygame.font.Font, session: PlaySession, s
     if banner:
         big = font.render(banner[0], True, banner[1])
         screen.blit(big, big.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+
+
+CONTROLS = (
+    ("Move", "W A S D"),
+    ("Attack (weapon)", "Space / left mouse"),
+    ("Cast selected spell", "E   (select with 1-9)"),
+    ("Block (hold)", "F / right mouse"),
+    ("Parry", "Q"),
+    ("Dodge", "Shift"),
+    ("Next owned weapon", "Tab"),
+    ("Talk / pick up", "G"),
+    ("Inventory", "I   (Up/Down, Enter)"),
+    ("Dialogue", "1-9 choose, Esc leave"),
+    ("Shop", "Left/Right tab, Up/Down, Enter, Esc"),
+    ("Save / load", "F5 / F9"),
+    ("Respawn (world) / restart (arena)", "R"),
+    ("Next scenario (arena only)", "N"),
+    ("Quit", "Esc"),
+)
+
+
+def draw_controls(screen: pygame.Surface, font: pygame.font.Font, small: pygame.font.Font) -> None:
+    rect = pygame.Rect(170, 90, 460, 380)
+    pygame.draw.rect(screen, (26, 28, 36), rect)
+    pygame.draw.rect(screen, GREY, rect, 1)
+    screen.blit(font.render("Controls (F1 to close)", True, WHITE), (rect.x + 12, rect.y + 10))
+    for i, (action, keys) in enumerate(CONTROLS):
+        y = rect.y + 40 + i * 22
+        screen.blit(small.render(action, True, GREY), (rect.x + 12, y))
+        screen.blit(small.render(keys, True, WHITE), (rect.x + 230, y))
 
 
 def new_session(arena_mode: bool, arena: Arena, encounter_id: str) -> PlaySession:
@@ -358,7 +388,7 @@ def load_session(result, arena_mode: bool, arena: Arena, encounter_id: str) -> P
     return WorldSession(player=result.player, world=result.world, campaign=result.campaign)
 
 
-def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = False) -> None:
+def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = False, load: bool = False) -> None:
     """Run the demo. ``max_frames`` lets smoke tests exit automatically."""
     # Only the subsystems we use; skipping audio saves memory on small machines.
     pygame.display.init()
@@ -373,6 +403,14 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
         saves = SaveManager(save_path)
         encounter_id = DEMO_ENCOUNTER_ID
         session = new_session(arena_mode, arena, encounter_id)
+        if load:
+            result = saves.load()
+            if result.ok:
+                session = load_session(result, arena_mode, arena, encounter_id)
+                session.log("Save loaded")
+            else:
+                session.log(f"No save loaded ({result.status.value}) - new game")
+        show_controls = False
         inputs = InputState()
         panel = InventoryPanel()
         shop = ShopPanel()
@@ -385,12 +423,12 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if session.shop is not None:
+                    if event.key == pygame.K_F1:
+                        show_controls = not show_controls
+                    elif session.shop is not None:
                         shop.handle_key(event.key, session)
                     elif session.conversation is not None:
                         handle_dialogue_key(event.key, session)
-                        if session.conversation is not None and session.conversation.ended and session.shop:
-                            session.end_conversation()  # the shop replaced the conversation
                     elif panel.open and event.key in (pygame.K_ESCAPE, pygame.K_i):
                         panel.toggle()
                     elif panel.open:
@@ -409,11 +447,8 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
                         session = GameSession.new(arena=arena, encounter_id=encounter_id)
                         session.log(f"Encounter: {session.encounter.spec.name}")
                     elif event.key == pygame.K_F5:
-                        if session.player.is_alive:
-                            saves.save(session.player, session.world, session.campaign)
-                            session.log(f"Saved to {saves.path.name}")
-                        else:
-                            session.log("Cannot save while dead")
+                        outcome = save_session(saves, session)
+                        session.log(f"Saved to {saves.path.name}" if outcome.ok else f"Not saved: {outcome.reason}")
                     elif event.key == pygame.K_F9:
                         result = saves.load()
                         if result.ok:
@@ -425,9 +460,7 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
                         inputs.handle_keydown(event.key)
 
             controls = inputs.build()
-            if session.shop is not None and session.conversation is not None:
-                session.end_conversation()
-            paused = panel.open or session.conversation is not None or session.shop is not None
+            paused = panel.open or show_controls or session.busy
             if not paused:  # inventory and dialogue pause the prototype
                 session.update(dt, controls)
             draw(screen, font, session, small)
@@ -436,6 +469,8 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
             draw_dialogue(screen, font, small, session)
             if session.shop is not None:
                 shop.draw(screen, font, small, session)
+            if show_controls:
+                draw_controls(screen, font, small)
             pygame.display.flip()
 
             frames += 1

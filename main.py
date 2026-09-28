@@ -15,12 +15,13 @@ def main() -> None:
     parser.add_argument("--frames", type=int, default=None, help="exit after N frames (smoke testing)")
     parser.add_argument("--arena", action="store_true",
                         help="encounter sandbox (MC-002 to MC-005 scenarios) instead of the zone world")
+    parser.add_argument("--load", action="store_true", help="resume from the save file on startup")
     args = parser.parse_args()
 
     # Imported here so --help works even without Pygame installed.
     from game.presentation.pygame_app import run
 
-    run(args.save, max_frames=args.frames, arena_mode=args.arena)
+    run(args.save, max_frames=args.frames, arena_mode=args.arena, load=args.load)
 
 
 if __name__ == "__main__":
