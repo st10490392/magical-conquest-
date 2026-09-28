@@ -152,6 +152,19 @@ rules before they move to a more capable 3D engine.
 - **Saves:** schema v6 (wallet and merchant stock); v5 migrates.
 - See [docs/ECONOMY_AND_PROGRESSION.md](docs/ECONOMY_AND_PROGRESSION.md).
 
+### MC-008: connected vertical slice
+
+- **One playable loop:** village → talk → quest → travel → fight → loot →
+  return → turn in → trade → equip → save → reload. It is driven end to end
+  by a headless test.
+- **Hardening:** fixes for shop/dialogue/death/save integration bugs, save
+  rules (no saving while dead or mid-conversation/trade), a save/load facade,
+  and tests for every awkward case.
+- **Quality of life:** quest markers over NPCs (! available, ? ready to hand
+  in), an F1 controls overlay, a shorter help line, and `--load` at startup.
+- See [docs/VERTICAL_SLICE.md](docs/VERTICAL_SLICE.md), which includes the
+  **human playtest checklist**.
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -164,7 +177,8 @@ pip install -r requirements.txt     # or: sudo pacman -S python-pygame
 ## Running the demo
 
 ```sh
-python main.py            # the zone world (MC-006+)
+python main.py            # new game in the zone world (the MC-008 vertical slice)
+python main.py --load     # resume from the save file
 python main.py --arena    # the encounter sandbox (MC-002 to MC-005 scenarios)
 ```
 
@@ -177,6 +191,7 @@ Options:
 
 | Input | Action |
 |---|---|
+| F1 | Show/hide the controls overlay (pauses the game) |
 | W A S D | Move |
 | Space / left mouse (hold) | Attack with the equipped weapon (or unarmed) |
 | 1–9 | Select a known spell |
@@ -189,7 +204,7 @@ Options:
 | 1–9 (in dialogue) | Choose a reply; Esc or G leaves (dialogue pauses the game) |
 | I | Open/close the inventory (pauses the game): Up/Down select, Enter equips/uses/unequips |
 | (in a shop) | Left/Right tab (Buy/Sell/Inspect), Up/Down select, Enter buy/sell one, Esc leave |
-| F5 / F9 | Save / load |
+| F5 / F9 | Save (refused while dead or talking/trading) / load |
 | N (arena only) | Next scenario: quest camp, mixed skirmish, the drills, goblin training |
 | R | Arena: restart the encounter. World: respawn in the village after dying |
 | Esc | Quit |
@@ -225,7 +240,10 @@ Visual cues (debug-quality on purpose; a later engine replaces them):
 - **Your own defense:** a yellow outline means you are blocking, a white
   outline means your parry window is open, and a light blue player is dodging.
 
-#### Suggested playtest checklist (MC-003)
+#### Suggested combat playtest checklist (MC-003, use `--arena`)
+
+For the full vertical-slice checklist, see
+[docs/VERTICAL_SLICE.md](docs/VERTICAL_SLICE.md).
 
 1. **Striker drill:** parry just before the strike lands and confirm the
    stagger. Then try a dodge and a block.
@@ -271,7 +289,8 @@ game/
   economy/     wallet, pricing, merchants, blacksmith services, prototype shops
   campaign.py  saved progress (quests, NPCs, flags, ledger, exploration, location, wallet, stock)
   world/       world clock + zones, world graph, exploration, zone instances
-  play.py      shared headless play loop (PlaySession)
+  play.py      shared headless play loop (PlaySession), save rules, quest markers
+  persistence/ save_manager (schema v6 + migrations), session_io (save/load facade)
   session.py   arena sandbox (GameSession)
   world_session.py  zone world (WorldSession)
   entities/    player, enemy (shared AI driver), archetypes (striker/archer/brute)

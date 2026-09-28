@@ -1,4 +1,4 @@
-# Magical Conquest prototype architecture (MC-001 to MC-003)
+# Magical Conquest prototype architecture (MC-001 to MC-008)
 
 The prototype has two goals: to show that the core rules work, and to keep
 those rules portable to a future 3D engine and server. The main design
@@ -353,6 +353,18 @@ See [NPCS_DIALOGUE_QUESTS.md](NPCS_DIALOGUE_QUESTS.md). In short:
   public API is unchanged, so every MC-002 to MC-005 test still uses it.
 - `game.world_session.WorldSession` is the zone world: travel, discovery,
   safe zones and respawn.
+
+## Vertical slice hardening (MC-008)
+
+See [VERTICAL_SLICE.md](VERTICAL_SLICE.md).
+
+- `PlaySession.save_blocker()` defines when saving is allowed.
+- `game/persistence/session_io.py` is the save/load facade the demo and the
+  end-to-end test share.
+- Integration fixes: opening a shop ends the conversation; death closes the
+  shop and conversation; trading needs an open shop; no travel while busy.
+- `tests/slice_driver.py` is a scripted player that uses only player-level
+  APIs, for end-to-end tests.
 
 ## Zones and exploration (MC-006)
 
