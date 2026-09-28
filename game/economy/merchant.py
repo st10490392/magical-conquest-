@@ -102,6 +102,7 @@ class TransactionStatus(str, Enum):
     NOT_BUYING = "merchant_does_not_buy_this"
     WALLET_FULL = "wallet_full"
     DEAD = "dead"
+    NO_SHOP_OPEN = "no_shop_open"
 
 
 @dataclass(frozen=True)

@@ -39,6 +39,7 @@ class TravelStatus(str, Enum):
     UNKNOWN_EXIT = "unknown_exit"
     DEAD = "dead"
     IN_CONVERSATION = "in_conversation"
+    IN_SHOP = "in_shop"
 
 
 @dataclass
@@ -106,6 +107,8 @@ class WorldSession(PlaySession):
             return TravelStatus.DEAD
         if self.conversation is not None:
             return TravelStatus.IN_CONVERSATION
+        if self.shop is not None:
+            return TravelStatus.IN_SHOP
         self.player.stop_block()
         self.bus.publish(ZoneLeft(self.zone.zone_id))
         self.enter_zone(exit_.target_zone, exit_.target_spawn)
@@ -117,6 +120,8 @@ class WorldSession(PlaySession):
             return False
         self.player.revive()
         self.last_player_death = None
+        self.end_conversation()
+        self.close_shop()
         self.enter_zone(self.graph.start_zone)
         self.log("You wake up in the village.")
         return True
@@ -136,7 +141,7 @@ class WorldSession(PlaySession):
         self.campaign.location = Location(self.zone.zone_id, player.position)
         self._discover()
         exit_ = self.zone_definition.exit_at(player.position)
-        if exit_ is not None and self.conversation is None:
+        if exit_ is not None and not self.busy:
             self.travel(exit_.exit_id)
 
     def _discover(self) -> None:

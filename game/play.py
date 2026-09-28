@@ -30,7 +30,7 @@ from game.dialogue.catalog import get_dialogue
 from game.dialogue.conversation import ChoiceResult, Conversation
 from game.economy.blacksmith import GearReport, inspect_equipment
 from game.economy.catalog import MERCHANTS
-from game.economy.merchant import Merchant, TransactionResult
+from game.economy.merchant import Merchant, TransactionResult, TransactionStatus
 from game.economy.wallet import CURRENCY_NAME
 from game.encounters.encounter import CombatEvent, Encounter, EncounterStatus
 from game.entities.enemy import Enemy
@@ -229,6 +229,8 @@ class PlaySession:
         if not player.is_alive and self.last_player_death is None:
             self.last_player_death = player.death
             self.conversation = None
+            self.talking_to = None
+            self.shop = None
             for quest_id in self.campaign.quests.on_player_death():
                 self.log(f"Quest failed: {self.campaign.quests.definitions[quest_id].title}")
         self._after_update(dt)
@@ -317,8 +319,10 @@ class PlaySession:
         if merchant_id not in MERCHANTS:
             return f"No such shop: {merchant_id}"
         self.shop = merchant_id
-        if self.conversation is not None:
+        if self.conversation is not None:  # the shop replaces the conversation
             self.conversation.close()
+        self.conversation = None
+        self.talking_to = None
         return f"Trading with {MERCHANTS[merchant_id].name}"
 
     def close_shop(self) -> None:
@@ -328,6 +332,8 @@ class PlaySession:
         return self.campaign.merchant(merchant_id or self.shop)
 
     def buy(self, item_id: str, quantity: int = 1) -> TransactionResult:
+        if self.shop is None:
+            return TransactionResult(TransactionStatus.NO_SHOP_OPEN, item_id)
         result = self.merchant().buy(self.player, self.campaign.wallet, item_id, quantity)
         name = get_item(item_id).name if item_id in ITEMS else item_id
         if result.ok:
@@ -338,6 +344,8 @@ class PlaySession:
         return result
 
     def sell(self, item_id: str, quantity: int = 1) -> TransactionResult:
+        if self.shop is None:
+            return TransactionResult(TransactionStatus.NO_SHOP_OPEN, item_id)
         result = self.merchant().sell(self.player, self.campaign.wallet, item_id, quantity)
         if result.ok:
             self.log(f"Sold {get_item(item_id).name} x{quantity} for {result.total} {CURRENCY_NAME}")
@@ -346,7 +354,35 @@ class PlaySession:
         return result
 
     def inspect_gear(self) -> tuple:
-        return inspect_equipment(self.merchant(), self.player)
+        return inspect_equipment(self.merchant(), self.player) if self.shop else ()
+
+    @property
+    def busy(self) -> bool:
+        """In a conversation or a shop (the UI pauses the game for these)."""
+        return self.conversation is not None or self.shop is not None
+
+    def save_blocker(self) -> Optional[str]:
+        """Why saving is not allowed right now, or None. Saving is refused
+        while dead (there is nothing valid to resume) and while a
+        conversation or shop is open (their UI state is not saved)."""
+        if not self.player.is_alive:
+            return "cannot save while dead"
+        if self.busy:
+            return "finish the conversation or trade first"
+        return None
+
+    def npc_marker(self, npc: NpcDefinition) -> str:
+        """Quest marker: "?" a quest is ready to hand in here, "!" one is
+        available here, "" otherwise."""
+        quests = self.campaign.quests
+        count = self.player.inventory.count
+        for quest_id, definition in quests.definitions.items():
+            if definition.turn_in_npc == npc.npc_id and quests.status(quest_id, count).value == "ready_to_turn_in":
+                return "?"
+        for quest_id in npc.gives_quests:
+            if quests.status(quest_id, count).value in ("available", "failed"):
+                return "!"
+        return ""
 
     def grant(self, source: RewardSource, ident: str, reward: Reward) -> RewardGrant:
         """The single hook for once-only rewards (quests use turn-in)."""
