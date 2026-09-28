@@ -22,6 +22,7 @@ from game.entities.enemy import Enemy
 from game.items.ground import PICKUP_RADIUS
 from game.presentation.dialogue_panel import draw_dialogue, handle_dialogue_key, tracker_lines
 from game.presentation.inventory_panel import InventoryPanel
+from game.presentation.shop_panel import ShopPanel
 from game.magic.casting import check_spell_requirements
 from game.persistence.save_manager import SaveManager
 from game.play import PlaySession
@@ -153,7 +154,7 @@ def hud_lines(session: PlaySession) -> List[Tuple[str, Tuple[int, int, int]]]:
         f"Weapon: {weapon.name} ({weapon.weapon_type.value})" if weapon else "Weapon: unarmed"
     ) + f"  block {'yes' if guard.can_block else 'no'} / parry {'yes' if guard.can_parry else 'no'}"
     lines = [
-        (f"{player.name}  Lv {player.level}  XP {player.xp}/{player.xp_to_next}", WHITE),
+        (f"{player.name}  Lv {player.level}  XP {player.xp}/{player.xp_to_next}   Coins {session.coins}", WHITE),
         (f"HP {s.health:.0f}/{s.max_health:.0f}", GREEN),
         (f"MP {s.mana:.0f}/{s.max_mana:.0f}   magic power {s.magic_power:.0f}", CYAN),
         (f"ST {s.stamina:.0f}/{s.max_stamina:.0f}", YELLOW),
@@ -374,6 +375,7 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
         session = new_session(arena_mode, arena, encounter_id)
         inputs = InputState()
         panel = InventoryPanel()
+        shop = ShopPanel()
 
         frames = 0
         running = True
@@ -383,8 +385,12 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if session.conversation is not None:
+                    if session.shop is not None:
+                        shop.handle_key(event.key, session)
+                    elif session.conversation is not None:
                         handle_dialogue_key(event.key, session)
+                        if session.conversation is not None and session.conversation.ended and session.shop:
+                            session.end_conversation()  # the shop replaced the conversation
                     elif panel.open and event.key in (pygame.K_ESCAPE, pygame.K_i):
                         panel.toggle()
                     elif panel.open:
@@ -419,13 +425,17 @@ def run(save_path: Path, max_frames: Optional[int] = None, arena_mode: bool = Fa
                         inputs.handle_keydown(event.key)
 
             controls = inputs.build()
-            paused = panel.open or session.conversation is not None
+            if session.shop is not None and session.conversation is not None:
+                session.end_conversation()
+            paused = panel.open or session.conversation is not None or session.shop is not None
             if not paused:  # inventory and dialogue pause the prototype
                 session.update(dt, controls)
             draw(screen, font, session, small)
             if panel.open:
                 panel.draw(screen, font, small, session)
             draw_dialogue(screen, font, small, session)
+            if session.shop is not None:
+                shop.draw(screen, font, small, session)
             pygame.display.flip()
 
             frames += 1

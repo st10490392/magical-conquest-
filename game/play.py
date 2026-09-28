@@ -28,6 +28,10 @@ from game.core.entity import DeathRecord
 from game.core.vector import Vec2
 from game.dialogue.catalog import get_dialogue
 from game.dialogue.conversation import ChoiceResult, Conversation
+from game.economy.blacksmith import GearReport, inspect_equipment
+from game.economy.catalog import MERCHANTS
+from game.economy.merchant import Merchant, TransactionResult
+from game.economy.wallet import CURRENCY_NAME
 from game.encounters.encounter import CombatEvent, Encounter, EncounterStatus
 from game.entities.enemy import Enemy
 from game.entities.player import Player
@@ -43,7 +47,7 @@ from game.events.events import (
     QuestStatusChanged,
 )
 from game.items.actions import ItemActionResult, equip_from_inventory, give_item, unequip_to_inventory, use_item
-from game.items.catalog import get_item
+from game.items.catalog import ITEMS, get_item
 from game.items.ground import GroundLoot, PickupStatus
 from game.items.loot_tables import get_loot_table
 from game.magic.attributes import MagicAttribute
@@ -51,6 +55,7 @@ from game.magic.catalog import SPELLS
 from game.magic.casting import check_spell_requirements
 from game.npcs.catalog import get_npc
 from game.npcs.definitions import NpcDefinition, can_interact
+from game.progression.rewards import GrantStatus, Reward, RewardGrant, RewardSource, grant_reward, reward_key
 from game.world.world_state import WorldState
 
 # PROTOTYPE VALUES - NON-FINAL BALANCE.
@@ -135,6 +140,7 @@ class PlaySession:
     bus: EventBus = field(default_factory=EventBus)
     conversation: Optional[Conversation] = None
     talking_to: Optional[NpcDefinition] = None
+    shop: Optional[str] = None  # merchant id of the open shop, if any
 
     def __post_init__(self) -> None:
         # Quests react to domain events instead of being called by combat.
@@ -266,7 +272,8 @@ class PlaySession:
             self.pick_up_loot()
 
     def dialogue_context(self, npc_id: Optional[str] = None) -> CampaignContext:
-        return CampaignContext(self.player, self.campaign, npc_id, on_item=self._reward_item)
+        return CampaignContext(self.player, self.campaign, npc_id, on_item=self._reward_item,
+                               on_open_shop=self.open_shop)
 
     def talk_to(self, npc_id: str) -> Optional[Conversation]:
         npc = get_npc(npc_id)
@@ -299,6 +306,59 @@ class PlaySession:
 
     def _on_quest_status(self, event: QuestStatusChanged) -> None:
         pass  # dialogue effects already report accept/complete; hook for UI/achievements
+
+    # ---------------------------------------------------------- economy
+    @property
+    def coins(self) -> int:
+        return self.campaign.wallet.balance
+
+    def open_shop(self, merchant_id: str) -> str:
+        """Dialogue effect: open a merchant's shop (the conversation ends)."""
+        if merchant_id not in MERCHANTS:
+            return f"No such shop: {merchant_id}"
+        self.shop = merchant_id
+        if self.conversation is not None:
+            self.conversation.close()
+        return f"Trading with {MERCHANTS[merchant_id].name}"
+
+    def close_shop(self) -> None:
+        self.shop = None
+
+    def merchant(self, merchant_id: Optional[str] = None) -> Merchant:
+        return self.campaign.merchant(merchant_id or self.shop)
+
+    def buy(self, item_id: str, quantity: int = 1) -> TransactionResult:
+        result = self.merchant().buy(self.player, self.campaign.wallet, item_id, quantity)
+        name = get_item(item_id).name if item_id in ITEMS else item_id
+        if result.ok:
+            self.log(f"Bought {name} x{quantity} for {result.total} {CURRENCY_NAME}")
+            self.bus.publish(ItemObtained(item_id, quantity, "purchase"))
+        else:
+            self.log(f"Cannot buy {name}: {outcome_text(result.status)}")
+        return result
+
+    def sell(self, item_id: str, quantity: int = 1) -> TransactionResult:
+        result = self.merchant().sell(self.player, self.campaign.wallet, item_id, quantity)
+        if result.ok:
+            self.log(f"Sold {get_item(item_id).name} x{quantity} for {result.total} {CURRENCY_NAME}")
+        else:
+            self.log(f"Cannot sell: {outcome_text(result.status)}")
+        return result
+
+    def inspect_gear(self) -> tuple:
+        return inspect_equipment(self.merchant(), self.player)
+
+    def grant(self, source: RewardSource, ident: str, reward: Reward) -> RewardGrant:
+        """The single hook for once-only rewards (quests use turn-in)."""
+        grant = grant_reward(self.player, reward, reward_key(source, ident), self.campaign.ledger, get_item,
+                             self.campaign.wallet, self._reward_item)
+        if grant.ok:
+            parts = [f"+{reward.xp} XP" if reward.xp else "", f"+{reward.currency} {CURRENCY_NAME}" if reward.currency else ""]
+            parts += [f"{get_item(i).name} x{q}" for i, q in reward.items]
+            self.log("Reward: " + ", ".join(p for p in parts if p))
+        elif grant.status is GrantStatus.INVENTORY_FULL:
+            self.log("Reward waiting: make room in your bags")
+        return grant
 
     # ------------------------------------------------------------ items
     def pick_up_loot(self) -> Optional[PickupStatus]:
@@ -393,7 +453,8 @@ class PlaySession:
         EnemyDefeated event that quests listen to."""
         self.kills += 1
         gained = self.player.gain_xp(enemy.xp_reward)
-        self.log(f"{enemy.name} defeated! +{enemy.xp_reward} XP")
+        coins = f", +{enemy.coins} {CURRENCY_NAME}" if enemy.coins and self.campaign.wallet.earn(enemy.coins).ok else ""
+        self.log(f"{enemy.name} defeated! +{enemy.xp_reward} XP{coins}")
         if gained.levels_gained:
             self.log(f"Level up! You are now level {gained.new_level}")
         if enemy.loot_table_id:

@@ -22,10 +22,9 @@ from typing import List, Optional
 from game.core.vector import Vec2
 from game.encounters.encounter import Encounter, EncounterStatus
 from game.events.events import LocationReached, ZoneEntered, ZoneLeft
-from game.items.catalog import get_item
 from game.npcs.definitions import NpcDefinition
 from game.play import Arena, PlayerInput, PlaySession, make_demo_player
-from game.progression.rewards import Reward, grant_reward
+from game.progression.rewards import Reward, RewardSource
 from game.world.exploration import Location, cleared_key
 from game.world.zone_catalog import WORLD, npcs_in
 from game.world.zone_instance import ZoneInstance
@@ -148,10 +147,7 @@ class WorldSession(PlaySession):
             exploration.discovered.add(poi.poi_id)
             self.log(f"Discovered: {poi.name}")
             if poi.discovery_xp:
-                grant = grant_reward(self.player, Reward(xp=poi.discovery_xp), f"discovery:{poi.poi_id}",
-                                     self.campaign.ledger, get_item)
-                if grant.ok:
-                    self.log(f"+{poi.discovery_xp} XP for exploring")
+                self.grant(RewardSource.EXPLORATION, poi.poi_id, Reward(xp=poi.discovery_xp))
             self.bus.publish(LocationReached(poi.poi_id))
 
     def _on_encounter_over(self, encounter: Encounter) -> None:
@@ -159,4 +155,7 @@ class WorldSession(PlaySession):
         placement_id = self.zone.placement_of(encounter)
         placement = self.zone_definition.placement(placement_id) if placement_id else None
         if encounter.status is EncounterStatus.CLEARED and placement and placement.respawn is RespawnRule.NEVER:
-            self.campaign.exploration.cleared.add(cleared_key(self.zone.zone_id, placement_id))
+            key = cleared_key(self.zone.zone_id, placement_id)
+            self.campaign.exploration.cleared.add(key)
+            if encounter.spec.clear_reward is not None:
+                self.grant(RewardSource.ENCOUNTER, key, encounter.spec.clear_reward)
