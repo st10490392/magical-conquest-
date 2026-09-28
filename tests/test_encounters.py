@@ -137,7 +137,7 @@ def fighting_player_input(session):
     """A simple scripted 'player': approach the nearest enemy, parry just
     before melee strikes land, otherwise attack."""
     player = session.player
-    target = session.encounter.nearest_enemy(player.position)
+    target = session.nearest_enemy()  # works for arena and world sessions
     if target is None:
         return PlayerInput()
     threat = next(
