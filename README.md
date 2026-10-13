@@ -176,3 +176,9 @@ unsupported.
 - Enemy blocking, parrying and dodging (the goblin only telegraphs).
 - A scheduler that starts world events automatically.
 - Final graphics, sprites, audio and animation.
+
+---
+
+## Project status update — 13 October 2026
+
+The project remains a Python/Pygame systems prototype, not a released MMO. The MC-004–MC-008 development sequence reached the `mc-008-vertical-slice` branch (reported commit `8884bd3`) with 294 tests passing in the development report. Human playtesting and a production Unreal build have **not** been verified. These milestones are branch-level work, not necessarily merged into this README's default branch.
